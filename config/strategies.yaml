@@ -1,0 +1,38 @@
+stealth_strategy:
+  max_slippage: 0.010            # 1%
+  permit2:
+    expiry_seconds: 3600
+    sig_deadline_seconds: 300
+  exact_output:
+    default_pool_fee: 3000
+  private_rpcs:
+    ethereum: [flashbots_protect, mev_blocker]
+    polygon:  [mev_blocker]
+    base:     [mev_blocker]
+  triggers:
+    min_flags: 2
+    flags:
+      high_slippage: 0.005
+      new_token_age_hours: 24
+      low_liquidity_usd: 100000
+      trending: true
+      active_snipers_min: 1
+
+hunter_strategy:
+  filters:
+    dex_only: true
+    min_pool_liquidity_usd: 200000
+  profit_threshold_wei: "100000000000000"  # 0.0001 ETH
+  max_bundle_retries: 2
+  builders: [default_builder_pool]         # defined in chains.yaml
+
+hybrid:
+  selection:
+    model: rule_based       # later: ml
+    rules:
+      prefer_stealth_if:
+        - gas_gwei > 120
+        - active_snipers >= 1
+      prefer_hunter_if:
+        - volatility > 0.7
+        - mempool_rate_tps > 25

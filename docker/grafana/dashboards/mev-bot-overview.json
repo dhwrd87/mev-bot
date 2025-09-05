@@ -1,0 +1,40 @@
+{
+  "title": "MEV Bot Overview",
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "WS Connections",
+      "targets": [{"expr":"ws_connections"}],
+      "gridPos": {"x":0,"y":0,"w":4,"h":3}
+    },
+    {
+      "type": "timeseries",
+      "title": "Pending TX /s (Polygon)",
+      "targets": [{"expr":"rate(mempool_pending_tx_total{chain=\"polygon\"}[1m])"}],
+      "gridPos": {"x":4,"y":0,"w":8,"h":6}
+    },
+    {
+      "type": "timeseries",
+      "title": "Flagged Snipers /m",
+      "targets": [{"expr":"rate(hunter_flagged_total{chain=\"polygon\"}[5m])"}],
+      "gridPos": {"x":0,"y":6,"w":12,"h":6}
+    },
+    {
+      "type": "timeseries",
+      "title": "Submit Success Ratio",
+      "targets": [{
+        "expr":"sum(rate(backrun_success_total[5m])) / clamp_min(sum(rate(backrun_submit_total[5m])), 1)"
+      }],
+      "gridPos": {"x":0,"y":12,"w":12,"h":6}
+    },
+    {
+      "type":"heatmap",
+      "title":"Detect Latency (ms)",
+      "targets":[{"expr":"histogram_quantile(0.95, sum(rate(detect_latency_ms_bucket[5m])) by (le))"}],
+      "gridPos":{"x":0,"y":18,"w":12,"h":6}
+    }
+  ],
+  "schemaVersion": 36,
+  "version": 1
+}

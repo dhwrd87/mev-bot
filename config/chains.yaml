@@ -1,0 +1,44 @@
+polygon:
+  private_orderflow:
+    endpoints:
+      - name: "provider-a-private"
+        url: "https://polygon-private.example.com"
+        kind: "rpc"
+        method_send_raw: "eth_sendRawTransaction"
+      - name: "builder-x"
+        url: "https://builder-x.example.com"
+        kind: "builder"
+        method_send_bundle: "eth_sendBundle"
+  uniswap_v2:
+    factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984"  # QuickSwap V2 Factory
+    router:  "0x1095692a6237d83c6a72f3f5efedb9a670c49223"         # fill in
+  uniswap_v3:
+    router:  "0x4C60051384bd2d3C01bfc845Cf5F4b44bcbE9de5"       # fill in
+    quoter_v2: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e	"       # fill in
+
+base:
+  private_orderflow:
+    endpoints:
+      - name: "provider-b-private"
+        url: "https://base-private.example.com"
+        kind: "rpc"
+ethereum:
+  private_orderflow:
+    endpoints:
+      - name: "mev-blocker"
+        url: "https://rpc.mevblocker.io"
+        kind: "rpc"
+      - name: "flashbots"
+        url: "https://rpc.flashbots.net"
+        kind: "rpc"
+      - name: "builder-pool"
+        url: "https://builderpool.example.com"
+        kind: "builder"
+        method_send_bundle: "eth_sendBundle"
+
+      - name: "flashbots-auth"
+        url: "https://relay.flashbots.net"
+        kind: "builder"
+        method_send_bundle: "eth_sendBundle"
+        headers:
+          X-Auth-Key: "${FLASHBOTS_AUTH_KEY}"

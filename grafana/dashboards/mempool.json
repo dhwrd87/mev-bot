@@ -1,0 +1,47 @@
+{
+  "title": "MEV Bot • Mempool Monitor",
+  "timezone": "browser",
+  "version": 1,
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "type": "gauge",
+      "title": "TPM (unique tx / 1m)",
+      "gridPos": {"x":0,"y":0,"w":8,"h":8},
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"min":0,"max":600},
+      "targets":[{"expr":"rate(mevbot_mempool_unique_tx_total[1m]) * 60","refId":"A"}]
+    },
+    {
+      "type": "gauge",
+      "title": "TPS (unique tx / 1s)",
+      "gridPos": {"x":8,"y":0,"w":8,"h":8},
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"min":0,"max":20},
+      "targets":[{"expr":"rate(mevbot_mempool_unique_tx_total[1m])","refId":"A"}]
+    },
+    {
+      "type": "stat",
+      "title": "WS Connected (per endpoint)",
+      "gridPos": {"x":16,"y":0,"w":8,"h":8},
+      "options":{"reduceOptions":{"calcs":["lastNotNull"]},"textMode":"value_and_name"},
+      "targets":[{"expr":"mempool_ws_connected = on(endpoint) (mevbot_mempool_ws_connected)","refId":"A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Unique tx rate",
+      "gridPos": {"x":0,"y":8,"w":24,"h":8},
+      "targets":[{"expr":"rate(mevbot_mempool_unique_tx_total[1m]) * 60","legendFormat":"TPM","refId":"A"}]
+    },
+    {
+      "type": "table",
+      "title": "Per-endpoint intake & errors",
+      "gridPos": {"x":0,"y":16,"w":24,"h":8},
+      "transformations":[{"id":"merge"}],
+      "targets":[
+        {"expr":"sum by (endpoint) (increase(mevbot_mempool_rx_total[5m]))","legendFormat":"rx {{endpoint}}","refId":"A"},
+        {"expr":"sum by (endpoint) (increase(mevbot_mempool_rx_errors_total[5m]))","legendFormat":"err {{endpoint}}","refId":"B"},
+        {"expr":"sum by (endpoint) (increase(mevbot_mempool_reconnects_total[5m]))","legendFormat":"reconnects {{endpoint}}","refId":"C"}
+      ]
+    }
+  ],
+  "templating":{"list":[]}
+}

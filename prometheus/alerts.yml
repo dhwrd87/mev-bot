@@ -1,0 +1,36 @@
+groups:
+- name: mempool-monitor
+  rules:
+  - alert: MempoolTPMBelowTarget
+    expr: rate(mevbot_mempool_unique_tx_total[1m]) * 60 < 100
+    for: 10m
+    labels: { severity: warning }
+    annotations:
+      summary: "TPM below target"
+      description: "Unique pending tx per minute < 100 for 10m."
+
+  - alert: WSDisconnected
+    expr: avg_over_time(mevbot_mempool_ws_connected[5m]) < 1
+    for: 5m
+    labels: { severity: critical }
+    annotations:
+      summary: "All WS endpoints down"
+      description: "No active WS connections in the last 5m."
+
+- name: mev-bot-private-submit
+  rules:
+  - alert: PrivateSubmitNoTraffic
+    expr: sum(rate(private_submit_attempts_total[10m])) == 0
+    for: 15m
+    labels: {severity: warning}
+    annotations:
+      summary: "No private submits in 15m"
+      description: "private_submit_attempts_total is zero for 15m."
+
+  - alert: PrivateSubmitLowSuccess
+    expr: (sum(rate(private_submit_success_total[10m])) / sum(rate(private_submit_attempts_total[10m]))) < 0.5
+    for: 10m
+    labels: {severity: critical}
+    annotations:
+      summary: "Private submit success ratio < 50% for 10m"
+      description: "Investigate endpoints or payload construction."

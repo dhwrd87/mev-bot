@@ -1,0 +1,130 @@
+--- a/bot/mempool/monitor.py
++++ b/bot/mempool/monitor.py
+@@
+-import asyncio, json, os, random, time
+-import inspect
++import asyncio, json, os, random, time, inspect
+ from collections import deque
+ from typing import List, Optional, Set, Tuple
+ 
+ import websockets
+ from websockets.exceptions import ConnectionClosed, WebSocketException
+ from prometheus_client import start_http_server
+@@
+-try:
+-    import redis  # optional at runtime/tests
+-except Exception:  # pragma: no cover
+-    redis = None
++# Prefer async Redis; fall back to sync client
++try:
++    import redis.asyncio as aioredis  # redis>=4.2
++except Exception:  # pragma: no cover
++    aioredis = None
++try:
++    import redis  # sync fallback
++except Exception:  # pragma: no cover
++    redis = None
+@@
+     def __init__(
+         self,
+         endpoints: List[str],
+         metrics_port: Optional[int] = None,
+         min_rate_target_tpm: int = 100,
+         dedup_window_size: int = 100_000,
+-        redis_url: Optional[str] = None,
+-        stream_key: str = "mempool:pending:txs",
++        redis_url: Optional[str] = None,
++        stream_key: str = "mempool:pending:txs",
++        # compatibility alias so existing code passing `redis_stream=` doesn't crash
++        redis_stream: Optional[str] = None,
++        **_ignore,  # ignore unknown kwargs for forward compatibility
+     ):
+@@
+-        # Optional Redis publishing
+-        self._redis = None
+-        self._stream = None
+-        if redis_url and redis:
+-            self._redis = redis.Redis.from_url(redis_url, decode_responses=True)
+-            self._stream = stream_key
++        # Optional Redis publishing
++        self._redis = None           # client (async or sync)
++        self._redis_async = False    # whether client is async
++        self._stream = redis_stream or stream_key
++        if redis_url:
++            if aioredis is not None:
++                self._redis = aioredis.from_url(redis_url, decode_responses=True)
++                self._redis_async = True
++            elif redis is not None:
++                self._redis = redis.Redis.from_url(redis_url, decode_responses=True)
++                self._redis_async = False
+@@
+         # Prime stream metrics if enabled
+-        if self._stream:
++        if self._stream:
+             mempool_stream_publish_total.labels(stream=self._stream).inc(0)
+             mempool_stream_publish_errors_total.labels(stream=self._stream).inc(0)
+@@
+     async def _reader(self, endpoint: str):
+@@
+-            try:
++            try:
+                 conn = websockets.connect(endpoint, ping_interval=20, ping_timeout=20)
+                 ws = await conn if inspect.isawaitable(conn) else conn
+ 
+                 # Send subscription immediately (tests spy on this)
+                 await ws.send(json.dumps(SUBSCRIBE_MSG))
++                mempool_ws_connected.labels(endpoint=endpoint).set(1)
++                backoff.reset()
+ 
+                 # Listen loop
+                 while not self._stop.is_set():
+                     raw = await ws.recv()
+                     ts_recv = time.time()
+@@
+             except (ConnectionClosed, WebSocketException, OSError):
+                 mempool_rx_errors_total.labels(endpoint=endpoint).inc()
+                 mempool_ws_connected.labels(endpoint=endpoint).set(0)
+                 mempool_reconnects_total.labels(endpoint=endpoint).inc()
+@@
+             self._timestamps.append(ts_recv)
+             mempool_unique_tx_total.inc()
+ 
+             # Optional Redis publish
+-            if self._redis:
+-                stream = self._stream or "mempool:pending:txs"
+-                try:
+-                    res = self._redis.xadd(stream, {"tx": tx_hash, "ts": str(ts_recv)})
+-                    if inspect.isawaitable(res):
+-                        await res
+-                    mempool_stream_publish_total.labels(stream=stream).inc()
+-                except Exception:
+-                    mempool_stream_publish_errors_total.labels(stream=stream).inc()
++            if self._redis and self._stream:
++                try:
++                    if self._redis_async:
++                        await self._redis.xadd(self._stream, {"tx": tx_hash, "ts": str(ts_recv)})
++                    else:
++                        # avoid blocking the event loop with sync client
++                        await asyncio.to_thread(self._redis.xadd, self._stream, {"tx": tx_hash, "ts": str(ts_recv)})
++                    mempool_stream_publish_total.labels(stream=self._stream).inc()
++                except Exception:
++                    mempool_stream_publish_errors_total.labels(stream=self._stream).inc()
+@@
+     async def stop(self):
+         self._stop.set()
+         for t in self._reader_tasks:
+             t.cancel()
+         if self._agg_task:
+             self._agg_task.cancel()
+ 
+         tasks = [*self._reader_tasks]
+         if self._agg_task:
+             tasks.append(self._agg_task)
+         if tasks:
+             await asyncio.gather(*tasks, return_exceptions=True)
++        # Close async redis cleanly
++        if self._redis and self._redis_async:
++            try:
++                await self._redis.aclose()  # redis>=5
++            except Exception:
++                pass

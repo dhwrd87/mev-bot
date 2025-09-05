@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'mev-bot'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['mev-bot:8000']
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    isDefault: true
+    url: http://prometheus:9090
+    jsonData:
+      timeInterval: 10s

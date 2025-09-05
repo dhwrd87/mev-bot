@@ -1,0 +1,104 @@
+services:
+  mev-bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+    image: local/mev-bot:latest
+    platform: linux/arm64
+    container_name: mev-bot-cores
+
+    env_file:
+      - ../.env.runtime
+
+    # Keep only mounts you actually need; avoid overriding the app code unless you're developing live.
+    volumes:
+      - ../config:/app/config
+      - /mnt/nas/mev/logs:/app/logs   # or use a named volume instead of NAS if you prefer
+
+    depends_on: [redis, postgres]
+    ports:
+      - "8000:8000"                   # FastAPI + /metrics on the same port
+    command: uvicorn bot.api.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    networks: [mevnet]
+
+    secrets:
+      - trader_pk
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  mempool-consumer:
+    image: local/mev-bot:latest
+    container_name: mev-mempool-consumer
+    command: ["python", "-m", "bot.workers.mempool_consumer"]
+    env_file:
+      - ../.env.runtime
+    depends_on: [redis]
+    restart: unless-stopped
+    networks: [mevnet]
+
+  redis:
+    image: redis:7-alpine
+    platform: linux/arm64
+    container_name: mev-redis
+    ports: ["6379:6379"]
+    volumes: ["redis-data:/data"]
+    restart: unless-stopped
+    networks: [mevnet]
+
+  postgres:
+    image: postgres:15
+    platform: linux/arm64
+    container_name: mev-db
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes: ["pg-data:/var/lib/postgresql/data"]
+    restart: unless-stopped
+    networks: [mevnet]
+
+  prometheus:
+    image: prom/prometheus:latest
+    platform: linux/arm64
+    container_name: mev-prometheus
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prom-data:/prometheus
+    restart: unless-stopped
+    networks: [mevnet]
+
+  grafana:
+    image: grafana/grafana:latest
+    platform: linux/arm64
+    container_name: mev-grafana
+    ports: ["3000:3000"]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_LOG_LEVEL=debug
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    restart: unless-stopped
+    networks: [mevnet]
+
+volumes:
+  pg-data:
+  redis-data:
+  prom-data:
+  grafana-data:
+
+networks:
+  mevnet:
+    driver: bridge
+
+secrets:
+  trader_pk:
+    file: ./secrets/trader_private_key.txt

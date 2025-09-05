@@ -1,0 +1,52 @@
+{
+  "title": "MEV Bot Overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Mempool TPM (rolling 60s)",
+      "targets": [{"expr": "mevbot_mempool_tpm"}],
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "Mempool TPS (rolling 60s)",
+      "targets": [{"expr": "mevbot_mempool_tps"}],
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4}
+    },
+    {
+      "type": "timeSeries",
+      "title": "Unique Pending TX (rate)",
+      "targets": [{"expr": "rate(mevbot_mempool_unique_tx_total[5m])"}],
+      "gridPos": {"x": 0, "y": 4, "w": 16, "h": 8}
+    },
+    {
+      "type": "timeSeries",
+      "title": "WS Connected (by endpoint)",
+      "targets": [{"expr": "mepool_ws_connected"}],
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 8}
+    },
+    {
+      "type": "timeSeries",
+      "title": "Orderflow Success (per endpoint/method)",
+      "targets": [{
+        "expr": "sum by (endpoint,method) (increase(mevbot_orderflow_submit_success_total[5m]))"
+      }],
+      "gridPos": {"x": 8, "y": 12, "w": 16, "h": 8}
+    },
+    {
+      "type": "bargauge",
+      "title": "Simulator Failures (single) by kind",
+      "targets": [{"expr": "sum by (kind) (increase(mevbot_sim_single_fail_total[15m]))"}],
+      "gridPos": {"x": 0, "y": 20, "w": 8, "h": 6}
+    },
+    {
+      "type": "bargauge",
+      "title": "Simulator Failures (bundle) by kind",
+      "targets": [{"expr": "sum by (kind) (increase(mevbot_sim_bundle_fail_total[15m]))"}],
+      "gridPos": {"x": 8, "y": 20, "w": 8, "h": 6}
+    }
+  ]
+}

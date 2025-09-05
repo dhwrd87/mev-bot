@@ -1,0 +1,3 @@
+endpoints:
+  - {name: good, kind: rpc, url: "https://good.private"}     # placeholder
+  - {name: bad,  kind: rpc, url: "https://bad.private"}      # placeholder
