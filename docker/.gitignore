@@ -1,0 +1,22 @@
+
+# Python
+__pycache__/
+*.pyc
+
+# Local env files
+.env.runtime
+.env.runtime.*
+.env
+docker/.env
+
+# Secrets
+docker/secrets/
+*.key
+*.pem
+*.txt
+
+# OS junk
+.DS_Store
+
+# tmp
+tmp/
