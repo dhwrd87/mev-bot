@@ -24,7 +24,7 @@
       },
       "targets": [
         {
-          "expr": "rate(mevbot_mempool_unique_tx_total[1m]) * 60",
+          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) * 60 or vector(0)",
           "refId": "A"
         }
       ]
@@ -49,7 +49,7 @@
       },
       "targets": [
         {
-          "expr": "rate(mevbot_mempool_unique_tx_total[1m])",
+          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) or vector(0)",
           "refId": "A"
         }
       ]
@@ -73,7 +73,7 @@
       },
       "targets": [
         {
-          "expr": "mevbot_mempool_ws_connected",
+          "expr": "max by (endpoint) (mevbot_mempool_ws_connected{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -89,7 +89,7 @@
       },
       "targets": [
         {
-          "expr": "rate(mevbot_mempool_unique_tx_total[1m]) * 60",
+          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) * 60",
           "legendFormat": "TPM",
           "refId": "A"
         }
@@ -111,17 +111,17 @@
       ],
       "targets": [
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total[5m]))",
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
           "legendFormat": "rx {{endpoint}}",
           "refId": "A"
         },
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total[5m]))",
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
           "legendFormat": "err {{endpoint}}",
           "refId": "B"
         },
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total[5m]))",
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
           "legendFormat": "reconnects {{endpoint}}",
           "refId": "C"
         }

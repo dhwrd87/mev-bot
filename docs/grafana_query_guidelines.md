@@ -37,6 +37,9 @@ Use these rules for all provisioned dashboards to avoid `bad_data` parse errors 
 - Do not filter by labels that do not exist on that metric.
   - Example: `mevbot_sim_fail_total` has no `dex` label in this repo.
 - Keep label cardinality low and selectors explicit.
+- Mempool panels should always include canonical filters:
+  - `{family=~"$family",chain=~"$chain",network=~"$network"}`
+  - For endpoint series: aggregate by endpoint, e.g. `sum by (endpoint) (...)`
 
 ## Validation
 
