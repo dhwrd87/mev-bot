@@ -1,0 +1,363 @@
+{
+  "generated_at": "2026-02-27T06:57:24Z",
+  "sources": {
+    "build_board": "docs/BUILD_BOARD.md",
+    "test_map": "docs/TEST_MAP.md",
+    "wiring_map": "docs/WIRING_MAP.md"
+  },
+  "items": [
+    {
+      "id": "bootstrap_repo_compose",
+      "title": "Bootstrap repo & compose",
+      "doc_ref": "`docker/docker-compose.yml`, `docker/docker-compose.override.yml`, `README.md`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Repo scaffold exists; docker compose up works; health endpoint returns 200",
+      "proof": "`make proof-bootstrap`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "runtime_status_command_scripts_status_py_make_status",
+      "title": "Runtime status command (`scripts/status.py` + `make status`)",
+      "doc_ref": "`scripts/status.py`, `Makefile`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Prints git hash, python version, env mode, docker compose health, DB connection, latest migration, paused flag, and latest smoke output timestamps/paths",
+      "proof": "`make status`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "typed_config_loader",
+      "title": "Typed config loader",
+      "doc_ref": "`bot/config.py`, `.env.runtime`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Pydantic settings loaded; .env validated at startup; missing vars fail startup",
+      "proof": "`make proof-typed-config`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "postgres_migrations",
+      "title": "Postgres + migrations",
+      "doc_ref": "`scripts/migrate.py`, `migrations/`, `sql/migrations/`, `docs/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Tables trades/opportunities/pnl_daily/alerts exist; migrations run idempotently; migration command documented",
+      "proof": "`make proof-postgres-migrations`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "telemetry_baseline",
+      "title": "Telemetry baseline",
+      "doc_ref": "`bot/core/telemetry.py`, `docker/prometheus/prometheus.yml`, `docker/grafana/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Prometheus metrics exposed; Grafana shows sample dashboard; scrape target passes health check",
+      "proof": "`make proof-telemetry-baseline`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "gap_1_mempool_producer_wiring",
+      "title": "GAP-1: mempool-producer wiring",
+      "doc_ref": "`docker/docker-compose.override.yml`, `Makefile`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "`mempool-producer` must run WS publisher path, not consumer module",
+      "proof": "`make gap1-proof`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "gap_2_ws_redis_publisher_runtime_path",
+      "title": "GAP-2: WS->Redis publisher runtime path",
+      "doc_ref": "`docker/docker-compose.override.yml`, `scripts/ws_to_redis.py`, `Makefile`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Compose stack starts; Redis stream grows over time; latest stream entries are readable",
+      "proof": "`make gap2-proof`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "gap_3_consumer_rpc_env_mismatch",
+      "title": "GAP-3: consumer RPC env mismatch",
+      "doc_ref": "`bot/workers/mempool_consumer.py`, `docker/docker-compose.override.yml`, `Makefile`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Consumer accepts `RPC_HTTP` fallback from `RPC_ENDPOINT_PRIMARY`; consumer fetch success appears in logs",
+      "proof": "`make gap3-proof`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "mempool_monitor_multi_ws",
+      "title": "Mempool monitor (multi-WS)",
+      "doc_ref": "`bot/workers/mempool_consumer.py`, `bot/mempool/`, `docker/docker-compose.override.yml`, `tests/`, `artifacts/proof/mempool_rate.json`",
+      "owner": "",
+      "status": "done",
+      "acceptance": ">=100 pending tx/min on Polygon test; unit tests cover reconnect/race; graceful backoff on WS errors",
+      "proof": "`make proof-mempool-monitor`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "ws_redis_publisher_path_consumer_handoff_wiring",
+      "title": "WS->Redis publisher path + consumer handoff wiring",
+      "doc_ref": "`docker/docker-compose.override.yml`, `scripts/ws_to_redis.py`, `bot/workers/mempool_consumer.py`, `scripts/validate_ws_redis_handoff.py`, `Makefile`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Producer runs real WS publisher (`ws_to_redis`); stream entries are fresh and growing; entries contain `hash/tx/ts/ts_ms`; consumer group is attached with non-error lag",
+      "proof": "`make proof-ws-redis-handoff`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "permit2_handler",
+      "title": "Permit2 handler",
+      "doc_ref": "`bot/permit2/`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Off-chain signature generation works; nonce management persisted; unit tests cover domain/expiry",
+      "proof": "`make proof-permit2`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "exact_output_swap",
+      "title": "Exact-output swap",
+      "doc_ref": "`bot/exec/`, `bot/sim/`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Calldata builds; simulation passes; revert caught; slippage <= config",
+      "proof": "`make proof-exact-output-swap`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "private_orderflow_router",
+      "title": "Private orderflow router",
+      "doc_ref": "`bot/exec/orderflow.py`, `bot/core/telemetry.py`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Routes by tx traits; retry+fallback implemented; relay success metric recorded",
+      "proof": "`make proof-private-orderflow`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "stealth_triggers",
+      "title": "Stealth triggers",
+      "doc_ref": "`bot/strategy/stealth.py`, `bot/config.py`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Flags driven by config; threshold unit tests pass; toggles reflected in logs",
+      "proof": "`make proof-stealth-triggers`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "stealth_e2e",
+      "title": "Stealth E2E",
+      "doc_ref": "`scripts/stealth_e2e.py`, `RUNBOOK.md`, `logs/`, `artifacts/proof/stealth_e2e.json`",
+      "owner": "",
+      "status": "done",
+      "acceptance": ">=10 trades via private path; zero sandwiched in test env; runbook updated",
+      "proof": "`make proof-stealth-e2e`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "sniper_sandwich_detectors",
+      "title": "Sniper/sandwich detectors",
+      "doc_ref": "`bot/detectors/`, `tests/fixtures/`, `reports/detector_eval.json`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Heuristics pass fixtures; precision/recall logged; false-positive rate reported",
+      "proof": "`make proof-sniper-sandwich`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "backrun_calculator",
+      "title": "Backrun calculator",
+      "doc_ref": "`bot/strategy/hunter.py`, `bot/sim/`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Profitable path computed; simulation > 0 profit; output includes gas + tip",
+      "proof": "`make proof-backrun-calculator`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "bundle_builder",
+      "title": "Bundle builder",
+      "doc_ref": "`bot/builders/`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Atomic bundle built; replay protection in place; retry policy enforced",
+      "proof": "`make proof-bundle-builder`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "builder_submissions",
+      "title": "Builder submissions",
+      "doc_ref": "`bot/builders/submitter.py`, `bot/core/telemetry.py`, `tests/`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "Submits to builder pool; success ratio metric emitted; exponential backoff on errors",
+      "proof": "`make proof-builder-submissions`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "hunter_e2e",
+      "title": "Hunter E2E",
+      "doc_ref": "`scripts/hunter_e2e.py`, `scripts/pnl_check.py`, `artifacts/hunter/hunter_e2e.json`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": ">=5 successful backruns in fork/testnet; positive P&L; artifacts saved",
+      "proof": "`make proof-hunter-e2e`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "strategy_orchestrator",
+      "title": "Strategy orchestrator",
+      "doc_ref": "`bot/orchestration/orchestrator.py`, `docs/`, `tests/`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "Rule-based switch (stealth/hunter/hybrid) works; state visible in telemetry; manual override documented",
+      "proof": "`make proof-strategy-orchestrator`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "adaptiveriskmanager",
+      "title": "AdaptiveRiskManager",
+      "doc_ref": "`bot/risk/adaptive.py`, `tests/`",
+      "owner": "",
+      "status": "doing",
+      "acceptance": "Kelly with safety factor applied; hard caps enforced; unit tests for edge cases",
+      "proof": "`make proof-adaptive-risk`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "kill_switch_api",
+      "title": "Kill-switch & API",
+      "doc_ref": "`bot/api/main.py`, `tests/integration/test_pause_api.py`, `Makefile`, `sql/migrations/0002_ops_state.sql`",
+      "owner": "",
+      "status": "done",
+      "acceptance": "/pause and /resume endpoints live; persisted flag survives restart; E2E verified",
+      "proof": "`make pause-test` and `make proof-kill-switch-api`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "gas_policy_module",
+      "title": "Gas policy module",
+      "doc_ref": "`bot/gas/`, `bot/core/telemetry.py`, `tests/`",
+      "owner": "",
+      "status": "doing",
+      "acceptance": "Dynamic gas ceiling applied; alerts on exceed; metric exported",
+      "proof": "`make proof-gas-policy`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "alerting",
+      "title": "Alerting",
+      "doc_ref": "`bot/alerts/`, `tests/fixtures/`, `docker/alertmanager/`",
+      "owner": "",
+      "status": "doing",
+      "acceptance": "Discord embeds on thresholds; test fixtures pass; throttle prevents spam",
+      "proof": "`make proof-alerting`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "grafana_dashboards",
+      "title": "Grafana dashboards",
+      "doc_ref": "`docker/grafana/dashboards/`, `docker/grafana/datasources/`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "Panels for P&L, win-rate, gas %, relay success, latency; JSON provisioning works",
+      "proof": "`make proof-grafana-dashboards`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "nightly_etl_duckdb",
+      "title": "Nightly ETL -> DuckDB",
+      "doc_ref": "`scripts/nightly_etl.py`, `scripts/weekly_report.py`, `data/duckdb/nightly_etl.json`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "ETL job persists data; weekly report script outputs JSON; job exit code monitored",
+      "proof": "`make proof-nightly-etl-duckdb`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "weekly_analytics_report",
+      "title": "Weekly analytics report",
+      "doc_ref": "`scripts/weekly_report.py`, `bot/analytics/`, `logs/weekly_report.log`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "Summary + recommendations saved to DB; report posted to Discord; run logged",
+      "proof": "`make proof-weekly-analytics-report`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "secrets_hardening",
+      "title": "Secrets hardening",
+      "doc_ref": "`docker/secrets/`, `.env.runtime`, `scripts/secret_scan.py`, `artifacts/proof/secret_scan.json`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "Docker secrets/age vault used; no plaintext keys in env/logs; secret scan passes",
+      "proof": "`make proof-secrets-hardening`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "access_control",
+      "title": "Access control",
+      "doc_ref": "`bot/api/`, `bot/security/`, `tests/`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "IP allowlist + API key + rate limit enforced; 403 on breach; logs include requester",
+      "proof": "`make proof-access-control`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "audit_logging",
+      "title": "Audit logging",
+      "doc_ref": "`bot/audit/`, `tests/`, `logs/`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "Append-only audit captures decisions; includes mode/reason; tamper check passes",
+      "proof": "`make proof-audit-logging`",
+      "evidence": [],
+      "last_checked": null
+    },
+    {
+      "id": "pre_submit_simulation",
+      "title": "Pre-submit simulation",
+      "doc_ref": "`bot/sim/`, `bot/exec/`, `tests/`",
+      "owner": "",
+      "status": "todo",
+      "acceptance": "Every tx simulated pre-submit; failures block submit; metrics logged",
+      "proof": "`make proof-pre-submit-simulation`",
+      "evidence": [],
+      "last_checked": null
+    }
+  ],
+  "runtime_checks": {}
+}

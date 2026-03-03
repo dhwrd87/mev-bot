@@ -1,0 +1,59 @@
+groups:
+  - name: mempool-pipeline-live
+    rules:
+      - alert: MevBotTargetDown
+        expr: up{job="mev-bot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: mev-bot
+        annotations:
+          summary: "mev-bot scrape target is down"
+          description: "Prometheus cannot scrape mev-bot /metrics for >2m."
+
+      - alert: MempoolProducerDisconnected
+        expr: max_over_time(mevbot_mempool_ws_connected[2m]) < 1
+        for: 2m
+        labels:
+          severity: warning
+          service: mempool-producer
+        annotations:
+          summary: "mempool producer websocket disconnected"
+          description: "No active producer websocket endpoint for >2m."
+
+      - alert: MempoolConsumerLagHigh
+        expr: max_over_time(mevbot_mempool_stream_group_lag{group="mempool"}[5m]) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: mempool-consumer
+        annotations:
+          summary: "consumer lag is high"
+          description: "Redis stream group lag for mempool > 1000 entries for 5m."
+
+      - alert: MempoolConsumerErrorRateHigh
+        expr: |
+          (
+            sum(rate(mevbot_rpc_gettx_429_total[5m])) +
+            sum(rate(mevbot_rpc_gettx_errors_total[5m])) +
+            sum(rate(mevbot_mempool_stream_consume_errors_total[5m]))
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: mempool-consumer
+        annotations:
+          summary: "consumer error rate is high"
+          description: "Combined 429 + RPC + consume errors > 5/s for 5m."
+
+      - alert: StreamNotGrowingWhileProducerConnected
+        expr: |
+          sum(rate(mevbot_mempool_stream_publish_total[2m])) < 0.01
+          and max_over_time(mevbot_mempool_ws_connected[2m]) >= 1
+        for: 2m
+        labels:
+          severity: warning
+          service: mempool-producer
+        annotations:
+          summary: "stream not growing while producer connected"
+          description: "Producer appears connected but Redis stream publish rate is flat for 2m."

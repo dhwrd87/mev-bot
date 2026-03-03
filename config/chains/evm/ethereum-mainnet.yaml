@@ -1,0 +1,64 @@
+{
+  "family": "evm",
+  "chain": "ethereum",
+  "network": "mainnet",
+  "chain_id": 1,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://ethereum-rpc.publicnode.com",
+        "ws": "wss://ethereum-rpc.publicnode.com"
+      },
+      {
+        "alias": "tenderly",
+        "http": "https://mainnet.gateway.tenderly.co",
+        "ws": "wss://mainnet.gateway.tenderly.co"
+      },
+      {
+        "alias": "infura",
+        "http": "https://mainnet.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://mainnet.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://etherscan.io",
+    "tx_url": "https://etherscan.io/tx/{tx_hash}",
+    "address_url": "https://etherscan.io/address/{address}",
+    "block_url": "https://etherscan.io/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "ETH",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${ETH_UNIV2_ROUTER}",
+      "factory": "${ETH_UNIV2_FACTORY}",
+      "fee_bps": 30
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${ETH_UNIV3_FACTORY}",
+      "quoter": "${ETH_UNIV3_QUOTER}",
+      "swap_router": "${ETH_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        500,
+        3000,
+        10000
+      ]
+    }
+  }
+}

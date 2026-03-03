@@ -1,0 +1,29 @@
+{
+  "chain": "sepolia",
+  "family": "evm",
+  "network": "testnet",
+  "enabled_dex_packs": ["univ2_uni", "univ2_sushi", "univ3_uni"],
+  "dex_packs": {
+    "univ2_uni": {
+      "type": "evm_univ2",
+      "router": "0x0000000000000000000000000000000000000001",
+      "factory": "0x0000000000000000000000000000000000000002",
+      "fee_bps": 30,
+      "init_code_hash": "0x96e8ac427619fd00000000000000000000000000000000000000000000000000",
+      "rpc_http": "https://ethereum-sepolia-rpc.publicnode.com"
+    },
+    "univ2_sushi": {
+      "type": "evm_univ2",
+      "router": "0x0000000000000000000000000000000000000011",
+      "factory": "0x0000000000000000000000000000000000000012",
+      "fee_bps": 30,
+      "rpc_http": "https://ethereum-sepolia-rpc.publicnode.com"
+    },
+    "univ3_uni": {
+      "type": "univ3",
+      "factory": "0x0000000000000000000000000000000000000003",
+      "quoter": "0x0000000000000000000000000000000000000004",
+      "swap_router": "0x0000000000000000000000000000000000000005"
+    }
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "dashboard": {
+    "id": 1233093081247744,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum by (reason) (increase(mevbot_tx_revert_total{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "legendFormat": "{{reason}}",
+            "refId": "A"
+          }
+        ],
+        "title": "Revert Reasons (10m)",
+        "type": "bargauge"
+      },
+      {
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum by (provider) (rate(mevbot_rpc_errors_total{family=~\"$family\",chain=~\"$chain\"}[5m]))",
+            "legendFormat": "provider={{provider}}",
+            "refId": "A"
+          },
+          {
+            "expr": "sum by (relay,code) (rate(mevbot_private_submit_errors_total{chain=~\"$chain\"}[5m]))",
+            "legendFormat": "relay={{relay}} code={{code}}",
+            "refId": "B"
+          }
+        ],
+        "title": "RPC Errors by Provider/Relay (5m)",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 16,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "max by (provider) (mevbot_head_lag_blocks{family=~\"$family\",chain=~\"$chain\"})",
+            "legendFormat": "head_lag {{provider}}",
+            "refId": "A"
+          },
+          {
+            "expr": "max by (provider) (mevbot_slot_lag{family=~\"$family\",chain=~\"$chain\"})",
+            "legendFormat": "slot_lag {{provider}}",
+            "refId": "B"
+          }
+        ],
+        "title": "Head/Slot Lag",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 9,
+          "w": 16,
+          "x": 0,
+          "y": 6
+        },
+        "targets": [
+          {
+            "expr": "sum by (le) (rate(mevbot_tx_confirm_latency_seconds_bucket{family=~\"$family\",chain=~\"$chain\"}[5m]))",
+            "format": "heatmap",
+            "refId": "A"
+          }
+        ],
+        "title": "Confirm Latency Histogram",
+        "type": "heatmap"
+      },
+      {
+        "gridPos": {
+          "h": 9,
+          "w": 8,
+          "x": 16,
+          "y": 6
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(mevbot_tx_revert_total{family=~\"$family\",chain=~\"$chain\",reason=\"nonce_too_low\"}[10m]))",
+            "legendFormat": "nonce_too_low",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(increase(mevbot_tx_revert_total{family=~\"$family\",chain=~\"$chain\",reason=~\"replacement|underpriced\"}[10m]))",
+            "legendFormat": "replacement_related",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(increase(mevbot_private_submit_errors_total{chain=~\"$chain\",code=\"bad_nonce\"}[10m]))",
+            "legendFormat": "bad_nonce_submit",
+            "refId": "C"
+          }
+        ],
+        "title": "Nonce / Replacement Events (10m)",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 39,
+    "tags": [
+      "execution",
+      "mev"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": true,
+            "text": [
+              "All"
+            ],
+            "value": [
+              "$__all"
+            ]
+          },
+          "datasource": "Prometheus",
+          "includeAll": true,
+          "multi": true,
+          "name": "family",
+          "query": "label_values(mevbot_tx_sent_total, family)",
+          "type": "query"
+        },
+        {
+          "current": {
+            "selected": true,
+            "text": [
+              "All"
+            ],
+            "value": [
+              "$__all"
+            ]
+          },
+          "datasource": "Prometheus",
+          "includeAll": true,
+          "multi": true,
+          "name": "chain",
+          "query": "label_values(mevbot_tx_sent_total, chain)",
+          "type": "query"
+        }
+      ]
+    },
+    "timezone": "browser",
+    "title": "Execution Deep Dive",
+    "uid": "execution-deep-dive",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "execution_deep_dive.json",
+    "slug": "execution-deep-dive",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/execution-deep-dive/execution-deep-dive",
+    "version": 1
+  }
+}

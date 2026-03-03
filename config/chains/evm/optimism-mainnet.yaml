@@ -1,0 +1,64 @@
+{
+  "family": "evm",
+  "chain": "optimism",
+  "network": "mainnet",
+  "chain_id": 10,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://optimism-rpc.publicnode.com",
+        "ws": "wss://optimism-rpc.publicnode.com"
+      },
+      {
+        "alias": "op",
+        "http": "https://mainnet.optimism.io",
+        "ws": "wss://mainnet.optimism.io"
+      },
+      {
+        "alias": "infura",
+        "http": "https://optimism-mainnet.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://optimism-mainnet.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://optimistic.etherscan.io",
+    "tx_url": "https://optimistic.etherscan.io/tx/{tx_hash}",
+    "address_url": "https://optimistic.etherscan.io/address/{address}",
+    "block_url": "https://optimistic.etherscan.io/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "ETH",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${OP_UNIV2_ROUTER}",
+      "factory": "${OP_UNIV2_FACTORY}",
+      "fee_bps": 30
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${OP_UNIV3_FACTORY}",
+      "quoter": "${OP_UNIV3_QUOTER}",
+      "swap_router": "${OP_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        500,
+        3000,
+        10000
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "family": "evm",
+    "chain": "sepolia",
+    "network": "testnet",
+    "token_in": "0x0000000000000000000000000000000000000001",
+    "token_out": "0x0000000000000000000000000000000000000002",
+    "sizes": [100, 250, 500, 1000],
+    "liquidity_usd": 250000,
+    "min_liquidity_usd": 1000
+  },
+  {
+    "family": "evm",
+    "chain": "base",
+    "network": "mainnet",
+    "token_in": "0x0000000000000000000000000000000000000001",
+    "token_out": "0x0000000000000000000000000000000000000002",
+    "sizes": [500, 1000, 2500, 5000],
+    "liquidity_usd": 1000000,
+    "min_liquidity_usd": 5000
+  },
+  {
+    "family": "sol",
+    "chain": "solana",
+    "network": "devnet",
+    "token_in": "So11111111111111111111111111111111111111112",
+    "token_out": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "sizes": [1000000, 2500000, 5000000],
+    "liquidity_usd": 100000,
+    "min_liquidity_usd": 1000
+  }
+]

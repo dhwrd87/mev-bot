@@ -1,0 +1,132 @@
+{
+  "dashboard": {
+    "id": 1233092825395200,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "builder:success_ratio:10m",
+            "legendFormat": "{{builder}} ({{chain}})"
+          }
+        ],
+        "title": "Builder Success Ratio (10m)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 16,
+          "x": 8,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum by (builder,chain) (rate(mevbot_bundle_inclusions_total[5m]))",
+            "legendFormat": "inclusions {{builder}} ({{chain}})"
+          },
+          {
+            "expr": "sum by (builder,chain) (rate(mevbot_bundle_attempts_total[5m]))",
+            "legendFormat": "attempts {{builder}} ({{chain}})"
+          }
+        ],
+        "title": "Bundle Inclusions / Attempts",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "builder:bundle_inclusion_latency_ms:p95",
+            "legendFormat": "{{builder}} ({{chain}})"
+          }
+        ],
+        "title": "Inclusion Latency p95 (ms)",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "sum by (builder,chain,reason) (rate(mevbot_bundle_rejections_total[10m]))",
+            "legendFormat": "{{reason}} {{builder}} ({{chain}})"
+          }
+        ],
+        "title": "Rejections by Reason (10m rate)",
+        "type": "bargauge"
+      },
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "(increase(mevbot_relay_success_total[10m])) / clamp_max(increase(mevbot_relay_attempts_total[10m]), 1e9)",
+            "legendFormat": "{{relay}} ({{chain}})"
+          }
+        ],
+        "title": "Relay Success Ratio (10m)",
+        "type": "stat"
+      }
+    ],
+    "schemaVersion": 38,
+    "title": "Private Orderflow Health",
+    "uid": "private-orderflow",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "private_orderflow.json",
+    "slug": "private-orderflow-health",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/private-orderflow/private-orderflow-health",
+    "version": 1
+  }
+}

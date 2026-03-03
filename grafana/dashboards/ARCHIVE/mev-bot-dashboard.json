@@ -1,0 +1,74 @@
+{
+  "uid": "mev-bot-starter",
+  "title": "MEV Bot – Starter",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Win Rate (Stealth, 24h)",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "mevbot_win_rate{mode=\"stealth\",window=\"24h\"}"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Total Profit USD",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(mevbot_profit_usd_total)"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Trades Today",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(increase(mevbot_trades_total[24h]))"}
+      ]
+    },
+    {
+      "type": "gauge",
+      "title": "Kill Switch",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "fieldConfig": {"defaults": {"min": 0, "max": 1}},
+      "targets": [{"expr": "mevbot_kill_switch"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Execution Latency (ms) by Mode",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.90, sum by (le, mode)(rate(mevbot_execute_latency_ms_bucket[5m])))"},
+        {"expr": "histogram_quantile(0.50, sum by (le, mode)(rate(mevbot_execute_latency_ms_bucket[5m])))"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Relay Success Ratio by Chain",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "avg by (relay, chain) (mevbot_relay_success_ratio)"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Gas Spend USD (rate)",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (chain) (rate(mevbot_gas_spent_usd_total[5m]))"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC Latency p90 (ms)",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.90, sum by (le, provider, chain)(rate(mevbot_rpc_latency_ms_bucket[5m])))"}
+      ]
+    }
+  ]
+}

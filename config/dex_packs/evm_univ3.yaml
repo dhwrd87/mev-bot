@@ -1,0 +1,7 @@
+{
+  "type": "evm_univ3",
+  "factory": "${UNIV3_FACTORY}",
+  "quoter": "${UNIV3_QUOTER}",
+  "swap_router": "${UNIV3_SWAP_ROUTER}",
+  "fee_tiers": [500, 3000, 10000]
+}

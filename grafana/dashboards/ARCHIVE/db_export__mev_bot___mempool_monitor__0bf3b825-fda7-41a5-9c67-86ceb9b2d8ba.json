@@ -1,0 +1,175 @@
+{
+  "dashboard": {
+    "id": 1233093181911040,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "max": 600,
+          "min": 0,
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ]
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(mevbot_mempool_unique_tx_total[1m]) * 60",
+            "refId": "A"
+          }
+        ],
+        "title": "TPM (unique tx / 1m)",
+        "type": "gauge"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        },
+        "options": {
+          "max": 20,
+          "min": 0,
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ]
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(mevbot_mempool_unique_tx_total[1m])",
+            "refId": "A"
+          }
+        ],
+        "title": "TPS (unique tx / 1s)",
+        "type": "gauge"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 0
+        },
+        "options": {
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "expr": "mempool_ws_connected = on(endpoint) (mevbot_mempool_ws_connected)",
+            "refId": "A"
+          }
+        ],
+        "title": "WS Connected (per endpoint)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "rate(mevbot_mempool_unique_tx_total[1m]) * 60",
+            "legendFormat": "TPM",
+            "refId": "A"
+          }
+        ],
+        "title": "Unique tx rate",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "targets": [
+          {
+            "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total[5m]))",
+            "legendFormat": "rx {{endpoint}}",
+            "refId": "A"
+          },
+          {
+            "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total[5m]))",
+            "legendFormat": "err {{endpoint}}",
+            "refId": "B"
+          },
+          {
+            "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total[5m]))",
+            "legendFormat": "reconnects {{endpoint}}",
+            "refId": "C"
+          }
+        ],
+        "title": "Per-endpoint intake & errors",
+        "transformations": [
+          {
+            "id": "merge"
+          }
+        ],
+        "type": "table"
+      }
+    ],
+    "schemaVersion": 39,
+    "templating": {
+      "list": []
+    },
+    "timezone": "browser",
+    "title": "MEV Bot \u2022 Mempool Monitor",
+    "uid": "0bf3b825-fda7-41a5-9c67-86ceb9b2d8ba",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "mempool.json",
+    "slug": "mev-bot-e280a2-mempool-monitor",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/0bf3b825-fda7-41a5-9c67-86ceb9b2d8ba/mev-bot-e280a2-mempool-monitor",
+    "version": 1
+  }
+}

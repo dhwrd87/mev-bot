@@ -1,0 +1,5 @@
+{
+  "type": "sol_jupiter",
+  "base_url": "https://quote-api.jup.ag/v6",
+  "timeout_ms": 1200
+}

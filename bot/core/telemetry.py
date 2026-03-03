@@ -1,13 +1,103 @@
+import contextlib
+import logging
 import os
+import shutil
+import time
+from pathlib import Path
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
 
-from bot.core.canonical import canonicalize_context
+from bot.core.canonical import ctx_labels
 from bot.core.state_machine import ALL_BOT_STATES
+
+log = logging.getLogger("telemetry")
+_MULTIPROC_INIT_DONE = False
+
+
+def _as_bool(v: str | None) -> bool:
+    return str(v or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_worker_count() -> int:
+    keys = ("WEB_CONCURRENCY", "GUNICORN_WORKERS", "UVICORN_WORKERS", "PROMETHEUS_WORKERS")
+    vals = []
+    for k in keys:
+        raw = str(os.getenv(k, "")).strip()
+        if not raw:
+            continue
+        try:
+            vals.append(int(raw))
+        except Exception:
+            continue
+    return max(vals) if vals else 1
+
+
+def _clear_multiproc_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    backup = path.parent / f"{path.name}.corrupt.{int(time.time())}"
+    try:
+        if path.exists():
+            path.rename(backup)
+    except Exception:
+        for child in path.glob("*"):
+            with contextlib.suppress(Exception):
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        path.mkdir(parents=True, exist_ok=True)
+        return
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_prometheus_multiproc_ready(*, force: bool = False) -> bool:
+    """
+    Best-effort guard for corrupted PROMETHEUS_MULTIPROC_DIR shard files.
+    Returns True when multiprocess mode remains enabled, False otherwise.
+    """
+    global _MULTIPROC_INIT_DONE
+    if _MULTIPROC_INIT_DONE and not force:
+        return bool(os.getenv("PROMETHEUS_MULTIPROC_DIR"))
+
+    mp_dir = str(os.getenv("PROMETHEUS_MULTIPROC_DIR", "")).strip()
+    if not mp_dir:
+        _MULTIPROC_INIT_DONE = True
+        return False
+
+    # Prefer single-process metrics in our default runtime unless explicitly required.
+    if _configured_worker_count() <= 1 and not _as_bool(os.getenv("PROMETHEUS_MULTIPROC_REQUIRED")):
+        log.info(
+            "PROMETHEUS_MULTIPROC_DIR is set (%s) but worker count <=1; disabling multiprocess metrics. "
+            "Set PROMETHEUS_MULTIPROC_REQUIRED=1 only for multi-worker setups.",
+            mp_dir,
+        )
+        os.environ.pop("PROMETHEUS_MULTIPROC_DIR", None)
+        _MULTIPROC_INIT_DONE = True
+        return False
+
+    mp_path = Path(mp_dir)
+    mp_path.mkdir(parents=True, exist_ok=True)
+    try:
+        from prometheus_client import CollectorRegistry, multiprocess
+
+        reg = CollectorRegistry()
+        multiprocess.MultiProcessCollector(reg)
+        # Probe scrape build to trigger mmap/decode errors early.
+        generate_latest(reg)
+    except (UnicodeDecodeError, OSError, ValueError, RuntimeError) as e:
+        log.warning(
+            "Prometheus multiprocess shard files appear corrupted in %s: %s. "
+            "Resetting directory and continuing startup.",
+            mp_dir,
+            e,
+        )
+        _clear_multiproc_dir(mp_path)
+    _MULTIPROC_INIT_DONE = True
+    return bool(os.getenv("PROMETHEUS_MULTIPROC_DIR"))
 
 
 def _chain_labels(chain: str | None = None, chain_family: str | None = None) -> tuple[str, str]:
-    ctx = canonicalize_context(
+    ctx = ctx_labels(
         family=(chain_family or os.getenv("CHAIN_FAMILY") or "evm"),
         chain=(chain or os.getenv("CHAIN") or "unknown"),
     )
@@ -16,7 +106,7 @@ def _chain_labels(chain: str | None = None, chain_family: str | None = None) -> 
 
 
 def _chain_label_values(chain: str | None = None, chain_family: str | None = None) -> dict[str, str]:
-    ctx = canonicalize_context(
+    ctx = ctx_labels(
         family=(chain_family or os.getenv("CHAIN_FAMILY") or "evm"),
         chain=(chain or os.getenv("CHAIN") or "unknown"),
     )
@@ -42,6 +132,10 @@ def get_endpoint_labels(
     labels = canonical_metric_labels(chain=chain, chain_family=chain_family)
     labels["endpoint"] = str(endpoint_alias or "unknown")
     return labels
+
+# Initialize multiprocess shard handling before metric objects are created.
+with contextlib.suppress(Exception):
+    ensure_prometheus_multiproc_ready()
 
 # ---------- Mempool ----------
 mempool_rx_total = Counter(
@@ -73,7 +167,7 @@ mempool_unique_tx_total = Counter(
 mempool_pending_tx_total = Counter(
     "mempool_pending_tx_total",
     "Pending tx count by chain",
-    ["chain"]
+    ["family", "chain", "network"]
 )
 mempool_tps = Gauge(
     "mevbot_mempool_tps",
@@ -89,10 +183,12 @@ mempool_tpm = Gauge(
 mempool_tps_legacy = Gauge(
     "mevbot_mempool_tps_legacy",
     "DEPRECATED: unlabeled mempool TPS gauge; use mevbot_mempool_tps{family,chain,network}",
+    ["family", "chain", "network"],
 )
 mempool_tpm_legacy = Gauge(
     "mevbot_mempool_tpm_legacy",
     "DEPRECATED: unlabeled mempool TPM gauge; use mevbot_mempool_tpm{family,chain,network}",
+    ["family", "chain", "network"],
 )
 
 mempool_message_latency_ms = Histogram(
@@ -104,6 +200,7 @@ mempool_message_latency_ms = Histogram(
 mempool_message_latency_ms_legacy = Histogram(
     "mevbot_mempool_message_latency_ms_legacy",
     "DEPRECATED: unlabeled mempool message latency; use labeled metric",
+    ["family", "chain", "network", "endpoint"],
     buckets=[1,2,5,10,20,50,100,250,500,1000],
 )
 
@@ -141,6 +238,7 @@ mempool_stream_consume_lag_ms = Histogram(
 mempool_stream_consume_lag_ms_legacy = Histogram(
     "mevbot_mempool_stream_consume_lag_ms_legacy",
     "DEPRECATED: unlabeled stream consume lag; use labeled metric",
+    ["family", "chain", "network", "endpoint"],
     buckets=[10,50,100,250,500,1000,2000,5000,10000],
 )
 mempool_stream_xlen = Gauge(
@@ -367,8 +465,8 @@ def seed_zeroes():
     chain_labels = canonical_metric_labels()
     mempool_tps.labels(**chain_labels).set(0)
     mempool_tpm.labels(**chain_labels).set(0)
-    mempool_tps_legacy.set(0)
-    mempool_tpm_legacy.set(0)
+    mempool_tps_legacy.labels(**chain_labels).set(0)
+    mempool_tpm_legacy.labels(**chain_labels).set(0)
 
 
 def set_bot_state(state: str, *, chain: str | None = None, chain_family: str | None = None) -> None:
@@ -417,7 +515,6 @@ def observe_rpc_latency(
 
 # ---- Compat symbols expected by older tests ----
 PENDING_TX_TOTAL = mempool_pending_tx_total
-
 
 def mount_metrics(app):
     from fastapi import Response

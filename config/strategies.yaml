@@ -1,14 +1,4 @@
 stealth_strategy:
-  max_slippage: 0.010            # 1%
-  permit2:
-    expiry_seconds: 3600
-    sig_deadline_seconds: 300
-  exact_output:
-    default_pool_fee: 3000
-  private_rpcs:
-    ethereum: [flashbots_protect, mev_blocker]
-    polygon:  [mev_blocker]
-    base:     [mev_blocker]
   triggers:
     min_flags: 2
     flags:
@@ -17,22 +7,47 @@ stealth_strategy:
       low_liquidity_usd: 100000
       trending: true
       active_snipers_min: 1
-
+      large_trade_usd: 20000
+      gas_spike_gwei: 120
+detectors:
+  sniper:
+    threshold: 0.60
+    priority_ratio_min: 1.8
+    slippage_min: 0.05
+    token_age_hours_max: 2
+    size_mid_usd: [300, 7000]
+    weights:
+      token_age: 0.35
+      priority_ratio: 0.20
+      slippage: 0.15
+      trending: 0.10
+      path_simple: 0.10
+      size_mid: 0.10
+  sandwich_victim:
+    threshold: 0.60
+    victim_slippage_min: 0.01
+    size_pool_ratio_min: 0.02
+    deadline_max_s: 90
+    priority_ratio_max: 1.5
+    weights:
+      exact_input: 0.20
+      slippage: 0.25
+      size_vs_pool: 0.25
+      deadline: 0.10
+      low_priority: 0.10
+      path_simple: 0.10
 hunter_strategy:
-  filters:
-    dex_only: true
+  min_profit_usd: 5.0
+  min_profit_wei: "100000000000000"
+  max_gas_ratio: 0.30
+  safety:
     min_pool_liquidity_usd: 200000
-  profit_threshold_wei: "100000000000000"  # 0.0001 ETH
-  max_bundle_retries: 2
-  builders: [default_builder_pool]         # defined in chains.yaml
-
-hybrid:
-  selection:
-    model: rule_based       # later: ml
-    rules:
-      prefer_stealth_if:
-        - gas_gwei > 120
-        - active_snipers >= 1
-      prefer_hunter_if:
-        - volatility > 0.7
-        - mempool_rate_tps > 25
+    max_trade_share_of_pool: 0.10
+  model:
+    pool_fee_bps_v2: 30
+    supported_v3_fees_bps: [5, 30, 100]
+  gas_estimates:
+    polygon:
+      swap_v2: 140000
+      swap_v3: 180000
+      bundle_overhead: 40000

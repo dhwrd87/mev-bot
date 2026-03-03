@@ -1,0 +1,28 @@
+services:
+  mev-bot:
+    # Override NAS and multiproc mounts to repo-local paths.
+    volumes: !override
+      - ../config:/app/config
+      - ../logs:/app/logs
+      - ../:/app
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+
+  mempool-consumer:
+    volumes: !override
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+      - ../:/app
+
+  mempool-producer:
+    command: >
+      sh -lc 'exec python3 -m bot.mempool.ws_subscribe'
+    volumes: !override
+      - ../:/app
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+
+  alertmanager:
+    volumes: !override
+      - ./alertmanager/alertmanager.override.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

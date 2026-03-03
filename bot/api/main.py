@@ -1,131 +1,1152 @@
-# bot/api/main.py
-import os, time, asyncio, logging
+import os, time, asyncio, logging, contextlib
 from typing import Optional, List
-
-from fastapi import FastAPI, APIRouter
-from prometheus_client import make_asgi_app
-from bot.telemetry.metrics import warm_metrics  # registers metrics
+from urllib.parse import urlparse
+from fastapi import FastAPI, HTTPException
 from web3 import Web3, HTTPProvider
+import requests
+import redis.asyncio as aioredis
 
+from bot.api.metrics import metrics_endpoint
 from bot.mempool.monitor import WSMempoolMonitor
 from bot.telemetry.alerts import AlertManager, AlertCfg
-import bot.telemetry.metrics as metrics
-from bot.telemetry.metrics import (
-    CHAIN,
-    PENDING_TX_TOTAL,
-    DETECT_LATENCY_MS,
-    PRIVATE_SUBMIT_ATTEMPTS, 
-    PRIVATE_SUBMIT_SUCCESS, 
-    PRIVATE_SUBMIT_ERRORS
+from bot.strategy.stealth import StealthStrategy
+from bot.core.config import get_settings, missing_required_env, format_missing_env
+from bot.core.telemetry import rpc_gettx_ok_total, rpc_gettx_errors_total
+from bot.core.chain_config import get_chain_config, _reset_chain_config_cache_for_tests
+from bot.core.chain_adapter import parse_chain_selection, validate_chain_selection
+from bot.core.state import BotState, build_state_machine, parse_bot_state, set_runtime_state
+from bot.core.invariants import get_runtime_invariants
+from bot.core.operator_control import get_operator_state
+from bot.core.canonical_chain import canonicalize_chain_target
+from bot.core.canonical_chain import canonicalize_labels
+from adapters.dex_packs.registry import DEXPackRegistry
+from bot.core.router import TradeRouter
+from bot.core.types_dex import TradeIntent
+from ops.metrics import (
+    seed_default_series,
+    set_runtime_bot_state,
+    start_metrics_http_server,
+    set_heartbeat,
+    set_chain_head,
+    set_chain_slot,
+    set_head_lag,
+    set_slot_lag,
+    record_stream_events_observed,
+)
+from ops.health_snapshot_writer import HealthSnapshotWriter
+
+from bot.core.telemetry import (
+    canonical_metric_labels,
+    seed_zeroes,
+    mempool_unique_tx_total,
+    private_submit_attempts, private_submit_success, private_submit_errors,
+    stealth_decisions_total, orchestrator_decisions_total, risk_blocks_total,
+    set_bot_state, record_bot_state_transition,
 )
 
-# ---- App & /metrics ---------------------------------------------------------
+# ---- App & /metrics ----
 app = FastAPI(title="MEV Bot API")
-app.mount("/metrics", make_asgi_app())   # no 307 needed if Prometheus uses /metrics/
+app.add_api_route("/metrics/", metrics_endpoint, methods=["GET"])
+app.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
 
-# single global so health can see it
 _monitor: Optional[WSMempoolMonitor] = None
+_runtime_monitor_task: Optional[asyncio.Task] = None
+_health_snapshot_writer: Optional[HealthSnapshotWriter] = None
+_dex_registry: Optional[DEXPackRegistry] = None
+_dex_router: Optional[TradeRouter] = None
 
-router = APIRouter()
-
-@router.post("/debug/private-submit/ok")
-def debug_private_submit_ok(endpoint: str = "demo"):
-    PRIVATE_SUBMIT_ATTEMPTS.labels(endpoint=endpoint).inc()
-    PRIVATE_SUBMIT_SUCCESS.labels(endpoint=endpoint).inc()
-    return {"ok": True, "endpoint": endpoint}
-
-@router.post("/debug/private-submit/fail")
-def debug_private_submit_fail(endpoint: str = "demo", kind: str = "http_500"):
-    PRIVATE_SUBMIT_ATTEMPTS.labels(endpoint=endpoint).inc()
-    PRIVATE_SUBMIT_ERRORS.labels(endpoint=endpoint, kind=kind).inc()
-    return {"ok": False, "endpoint": endpoint, "kind": kind}
-
-# ---- Debug endpoint to materialize series quickly ---------------------------
-@app.post("/debug/bump")
-def bump():
-    from bot.telemetry.metrics import PENDING_TX_TOTAL, CHAIN
-    PENDING_TX_TOTAL.labels(chain=CHAIN).inc()
-    return {"ok": True}
+log = logging.getLogger(__name__)
 
 
+def _ops_dsn_candidates() -> List[str]:
+    candidates: List[str] = []
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    if dsn:
+        candidates.append(dsn)
+
+    user = os.getenv("POSTGRES_USER", "mevbot")
+    pwd = os.getenv("POSTGRES_PASSWORD", "mevbot_pw")
+    db = os.getenv("POSTGRES_DB", "mevbot")
+    host = os.getenv("POSTGRES_HOST", "postgres")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    candidates.append(f"postgresql://{user}:{pwd}@{host}:{port}/{db}")
+
+    # Conservative runtime fallbacks for this stack's local defaults.
+    candidates.append("postgresql://mevbot:mevbot_pw@postgres:5432/mevbot")
+    candidates.append("postgresql://mevbot:mevbot_pw@127.0.0.1:5432/mevbot")
+    # Deduplicate while preserving order.
+    seen = set()
+    deduped: List[str] = []
+    for d in candidates:
+        if d in seen:
+            continue
+        seen.add(d)
+        deduped.append(d)
+    return deduped
+
+
+def _ensure_ops_state_table(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_state(
+          k TEXT PRIMARY KEY,
+          v TEXT NOT NULL,
+          updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO ops_state(k, v)
+        VALUES ('paused', 'false')
+        ON CONFLICT (k) DO NOTHING
+        """
+    )
+
+
+def _db_connect():
+    import psycopg
+
+    last_err = None
+    for dsn in _ops_dsn_candidates():
+        try:
+            return psycopg.connect(dsn, autocommit=True)
+        except Exception as e:
+            last_err = e
+    raise last_err
+
+
+def _read_paused_flag() -> bool:
+    try:
+        with _db_connect() as conn:
+            _ensure_ops_state_table(conn)
+            row = conn.execute("SELECT v FROM ops_state WHERE k='paused'").fetchone()
+            if not row:
+                return False
+            return str(row[0]).strip().lower() == "true"
+    except Exception as e:
+        log.warning("Failed to read paused flag from DB: %s", e)
+        return False
+
+
+def _write_paused_flag(value: bool) -> None:
+    with _db_connect() as conn:
+        _ensure_ops_state_table(conn)
+        conn.execute(
+            """
+            INSERT INTO ops_state(k, v, updated_at)
+            VALUES ('paused', %s, now())
+            ON CONFLICT (k) DO UPDATE SET
+                v=EXCLUDED.v,
+                updated_at=now()
+            """,
+            ("true" if value else "false",),
+        )
+
+
+def _get_chain_snapshot() -> dict:
+    try:
+        cfg = get_chain_config()
+        return {
+            "chain": cfg.chain,
+            "chain_id": cfg.chain_id,
+            "rpc_http_selected": cfg.rpc_http_selected,
+            "ws_endpoints_selected": cfg.ws_endpoints_selected,
+        }
+    except Exception:
+        ws_env = [x.strip() for x in str(os.getenv("WS_ENDPOINTS_EXTRA", "")).split(",") if x.strip()]
+        rpc_env = [x.strip() for x in str(os.getenv("RPC_HTTP_EXTRA", "")).split(",") if x.strip()]
+        raw_chain_id = str(os.getenv("CHAIN_ID", "0")).strip() or "0"
+        try:
+            chain_id = int(raw_chain_id)
+        except Exception:
+            chain_id = 0
+        return {
+            "chain": str(os.getenv("CHAIN", "unknown")).strip().lower() or "unknown",
+            "chain_id": chain_id,
+            "rpc_http_selected": rpc_env[0] if rpc_env else "",
+            "ws_endpoints_selected": ws_env,
+        }
+
+
+def _dex_override_signature(op_state: dict, *, family: str, chain: str, network: str) -> tuple:
+    overrides = op_state.get("enabled_dex_overrides")
+    allow = []
+    deny = []
+    if isinstance(overrides, dict):
+        allow = [str(x).strip().lower() for x in overrides.get("allowlist", []) if str(x).strip()]
+        deny = [str(x).strip().lower() for x in overrides.get("denylist", []) if str(x).strip()]
+    if not allow:
+        allow = [str(x).strip().lower() for x in op_state.get("dex_packs_enabled", []) if str(x).strip()]
+    deny = sorted(set(deny + [str(x).strip().lower() for x in op_state.get("dex_packs_disabled", []) if str(x).strip()]))
+    return (
+        str(family).strip().lower(),
+        str(chain).strip().lower(),
+        str(network).strip().lower(),
+        tuple(sorted(set(allow))),
+        tuple(sorted(set(deny))),
+    )
+
+
+async def _maybe_reload_dex_router(op_state: dict) -> None:
+    global _dex_registry, _dex_router
+    if _dex_registry is None:
+        return
+
+    cfg = _get_chain_snapshot()
+    family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
+    chain = str(cfg.get("chain", "unknown")).strip().lower() or "unknown"
+    _, _, network = canonicalize_labels(family=family, chain=chain)
+    sig = _dex_override_signature(op_state, family=family, chain=chain, network=network)
+    if sig == getattr(app.state, "_dex_overrides_sig", None):
+        return
+
+    try:
+        _transition_state(BotState.PAUSED, actor="system", reason="dex_reconfigure_pause", force=True)
+        _dex_registry.reload(family=family, chain=chain, network=network)
+        if _dex_router is None:
+            _dex_router = TradeRouter(
+                registry=_dex_registry,
+                quote_timeout_ms=int(os.getenv("ROUTER_QUOTE_TIMEOUT_MS", "800")),
+            )
+        app.state.dex_registry = _dex_registry
+        app.state.dex_router = _dex_router
+        app.state._dex_overrides_sig = sig
+        app.state._dex_enabled = _dex_registry.enabled_names()
+        log.info("dex registry reloaded chain=%s family=%s enabled=%s", chain, family, app.state._dex_enabled)
+        _transition_state(BotState.READY, actor="system", reason="dex_reconfigure_ready", force=True)
+    except Exception as e:
+        log.warning("dex registry reload failed: %s", e)
+        _transition_state(BotState.DEGRADED, actor="system", reason="dex_reconfigure_failed", force=True)
+
+
+def _transition_state(
+    target: str | BotState,
+    *,
+    actor: str,
+    reason: str,
+    force: bool = False,
+) -> dict:
+    state_machine = getattr(app.state, "bot_state_machine", None)
+    if not state_machine:
+        app.state.bot_state_machine = build_state_machine()
+        state_machine = app.state.bot_state_machine
+
+    rec = state_machine.transition(target, actor=actor, reason=reason, force=force)
+    record_bot_state_transition(rec.from_state, rec.to_state, rec.reason)
+    to_state = parse_bot_state(rec.to_state)
+    set_runtime_state(to_state)
+
+    app.state.paused = to_state == BotState.PAUSED
+    _write_paused_flag(app.state.paused)
+    return {
+        "ok": True,
+        "state": rec.to_state,
+        "paused": app.state.paused,
+        "transition": {
+            "ts_ms": rec.ts_ms,
+            "actor": rec.actor,
+            "reason": rec.reason,
+            "from": rec.from_state,
+            "to": rec.to_state,
+        },
+    }
+
+
+async def _reload_chain_runtime(selection_name: str) -> dict:
+    global _monitor
+
+    sel = parse_chain_selection(selection_name)
+    os.environ["CHAIN_FAMILY"] = sel.family.lower()
+    os.environ["CHAIN"] = sel.chain
+    _reset_chain_config_cache_for_tests()
+
+    if _monitor:
+        await _monitor.stop()
+        _monitor = None
+
+    if sel.family == "EVM":
+        cfg = get_chain_config()
+        os.environ["CHAIN_ID"] = str(cfg.chain_id)
+        app.state.w3 = Web3(HTTPProvider(cfg.rpc_http_selected)) if cfg.rpc_http_selected else None
+        if cfg.ws_endpoints_selected:
+            _monitor = WSMempoolMonitor(
+                endpoints=cfg.ws_endpoints_selected,
+                metrics_port=None,
+                redis_stream=os.getenv("REDIS_STREAM", "mempool:pending:txs"),
+                redis_url=os.getenv("REDIS_URL", "redis://mev-redis:6379/0"),
+            )
+            asyncio.create_task(_monitor.start())
+        return {
+            "family": sel.family,
+            "chain": cfg.chain,
+            "chain_id": cfg.chain_id,
+            "rpc_http_selected": cfg.rpc_http_selected,
+            "ws_endpoints_selected": cfg.ws_endpoints_selected,
+        }
+
+    # SOL-family runtime support is intentionally limited to config/env selection.
+    app.state.w3 = None
+    return {
+        "family": sel.family,
+        "chain": sel.chain,
+        "chain_id": int(os.getenv("CHAIN_ID", "0") or "0"),
+        "rpc_http_selected": str(os.getenv("SOL_RPC_HTTP", "")).strip(),
+        "ws_endpoints_selected": [],
+    }
+
+
+def _emit_chain_switch_labels_now(*, state: BotState, mode: str) -> None:
+    cfg = _get_chain_snapshot()
+    family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
+    chain = str(cfg.get("chain", "unknown")).strip().lower() or "unknown"
+    set_runtime_bot_state(family=family, chain=chain, state=state.value)
+    set_heartbeat(family=family, chain=chain, unix_ts=time.time())
+    if _health_snapshot_writer is not None:
+        _health_snapshot_writer.maybe_write(
+            family=family,
+            chain=chain,
+            state=state.value,
+            mode=mode,
+            force=True,
+        )
+
+
+def _validate_dex_profiles_for_chain(*, family: str, chain: str) -> dict:
+    if _dex_registry is None:
+        return {"ok": True, "validated": 0, "errors": []}
+    _, _, network = canonicalize_labels(family=family, chain=chain)
+    return _dex_registry.validate_enabled_pack_configs(family=family, chain=chain, network=network)
+
+
+def _default_verify_intent(*, family: str, chain: str, network: str, dex: str) -> TradeIntent:
+    if family == "sol":
+        return TradeIntent(
+            family=family,
+            chain=chain,
+            network=network,
+            dex_preference=dex,
+            token_in=str(os.getenv("VERIFY_SOL_TOKEN_IN", "So11111111111111111111111111111111111111112")),
+            token_out=str(os.getenv("VERIFY_SOL_TOKEN_OUT", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")),
+            amount_in=int(os.getenv("VERIFY_SOL_AMOUNT_IN", "1000000")),
+            slippage_bps=int(os.getenv("VERIFY_SLIPPAGE_BPS", "100")),
+            ttl_s=30,
+            strategy="chain_switch_verify",
+        )
+    return TradeIntent(
+        family=family,
+        chain=chain,
+        network=network,
+        dex_preference=dex,
+        token_in=str(os.getenv("VERIFY_EVM_TOKEN_IN", "0x4200000000000000000000000000000000000006")),
+        token_out=str(os.getenv("VERIFY_EVM_TOKEN_OUT", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")),
+        amount_in=int(os.getenv("VERIFY_EVM_AMOUNT_IN", "1000000")),
+        slippage_bps=int(os.getenv("VERIFY_SLIPPAGE_BPS", "100")),
+        ttl_s=30,
+        strategy="chain_switch_verify",
+    )
+
+
+def _warm_dex_pack_cache(*, family: str, chain: str) -> dict:
+    if _dex_registry is None:
+        return {"ok": True, "attempted": 0, "ok_count": 0, "errors": []}
+    _, _, network = canonicalize_labels(family=family, chain=chain)
+    _dex_registry.reload(family=family, chain=chain, network=network)
+    packs = _dex_registry.list()
+    if not packs:
+        return {"ok": True, "attempted": 0, "ok_count": 0, "errors": []}
+    errors = []
+    ok_count = 0
+    for pack in packs:
+        try:
+            intent = _default_verify_intent(family=family, chain=chain, network=network, dex=pack.name())
+            q = pack.quote(intent)
+            if int(getattr(q, "expected_out", 0) or 0) <= 0:
+                raise RuntimeError("expected_out<=0")
+            ok_count += 1
+        except Exception as e:
+            errors.append(f"{pack.name()}:{e}")
+    return {"ok": not errors, "attempted": len(packs), "ok_count": ok_count, "errors": errors}
+
+async def start_mempool_publisher():
+    if not K.WS_ENDPOINTS:
+        log.warning("No WS endpoints configured; mempool publisher disabled")
+        return
+    r = aioredis.from_url(os.getenv("REDIS_URL","redis://redis:6379/0"))
+    rpc = RpcClient()  # reuses K.RPC_HTTP
+    stream = os.getenv("MEMPOOL_STREAM","mempool:pending:txs")
+    log.info("WS publisher starting: %d endpoints -> stream %s", len(K.WS_ENDPOINTS), stream)
+    await ingest_to_queue(r, stream, K.WS_ENDPOINTS, rpc)
+
+# ---- Debug: seed visible series at boot ----
 @app.on_event("startup")
 async def _warm_prom():
-    metrics.warm_metrics()
+    seed_zeroes()
 
-# ---- Startup / Shutdown -----------------------------------------------------
+# ---- Startup / Shutdown ----
 def _ws_env_endpoints() -> List[str]:
-    vals = [
-        os.getenv("WS_POLYGON_1", "").strip(),
-        os.getenv("WS_POLYGON_2", "").strip(),
-        os.getenv("WS_POLYGON_3", "").strip(),
-    ]
-    return [v for v in vals if v]
+    return get_chain_config().ws_endpoints
+
+def _rpc_http_from_env() -> str:
+    return get_chain_config().rpc_http
 
 @app.on_event("startup")
 async def _startup():
+    global _health_snapshot_writer, _dex_registry, _dex_router
     logging.basicConfig(level=logging.INFO)
+    start_metrics_http_server()
+    seed_default_series(
+        family=str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm",
+        chain=str(os.getenv("CHAIN", "unknown")).strip().lower() or "unknown",
+    )
+    _health_snapshot_writer = HealthSnapshotWriter(
+        path=os.getenv("HEALTH_SNAPSHOT_PATH", "ops/health_snapshot.json"),
+        interval_s=float(os.getenv("HEALTH_SNAPSHOT_INTERVAL_S", "10")),
+    )
+    op_state_path = str(
+        os.getenv("OPERATOR_STATE_PATH", os.getenv("OPERATOR_STATE_FILE", "/app/ops/operator_state.json"))
+    ).strip()
+    _dex_registry = DEXPackRegistry(operator_state_path=op_state_path)
+    _dex_router = TradeRouter(
+        registry=_dex_registry,
+        quote_timeout_ms=int(os.getenv("ROUTER_QUOTE_TIMEOUT_MS", "800")),
+    )
+    app.state.dex_registry = _dex_registry
+    app.state.dex_router = _dex_router
+    app.state._dex_overrides_sig = None
+    app.state._dex_enabled = []
 
-    # Alerts (optional)
+    missing = missing_required_env()
+    if missing:
+        logging.error(format_missing_env(missing))
+
+    # Validate full settings (will raise SystemExit on invalid config)
+    app.state.settings = get_settings()
+
     app.state.alerts = AlertManager(AlertCfg(
-        webhook=os.getenv("DISCORD_WEBHOOK", ""),
-        service=os.getenv("SERVICE_NAME", "mev-bot"),
-        enabled=os.getenv("ALERTS_ENABLED", "true").lower() == "true",
-        default_cooldown_s=int(os.getenv("ALERTS_DEFAULT_COOLDOWN", "60")),
+        webhook=os.getenv("DISCORD_WEBHOOK",""),
+        service=os.getenv("SERVICE_NAME","mev-bot"),
+        enabled=os.getenv("ALERTS_ENABLED","true").lower() == "true",
+        default_cooldown_s=int(os.getenv("ALERTS_DEFAULT_COOLDOWN","60")),
     ))
 
-    # Web3 (optional)
-    rpc = os.getenv("RPC_ENDPOINT_PRIMARY", "").strip()
+    rpc = _rpc_http_from_env()
     app.state.w3 = Web3(HTTPProvider(rpc)) if rpc else None
     if app.state.w3 and not app.state.w3.is_connected():
         logging.warning("[startup] cannot connect to RPC %s", rpc)
 
-    # Seed metrics so Prom/Graf see series immediately
-    try:
-        # define inline seeding to avoid import errors if not present in metrics.py
-        PENDING_TX_TOTAL.labels(chain=CHAIN).inc(0)
-        # If you have these counters in metrics.py, uncomment to seed them too:
-        # HUNTER_FLAGGED_TOTAL.labels(chain=CHAIN).inc(0)
-        # BACKRUN_SUBMIT_TOTAL.labels(chain=CHAIN).inc(0)
-        # BACKRUN_SUCCESS_TOTAL.labels(chain=CHAIN).inc(0)
-    except Exception:
-        pass
-
-    # Start mempool monitor if any WS endpoints are set
     endpoints = _ws_env_endpoints()
     global _monitor
     if endpoints:
         _monitor = WSMempoolMonitor(
             endpoints=endpoints,
             metrics_port=None,
-            redis_stream=os.getenv("REDIS_STREAM", "mempool:pending:txs"),
-            redis_url=os.getenv("REDIS_URL", "redis://mev-redis:6379/0"),
+            redis_stream=os.getenv("REDIS_STREAM","mempool:pending:txs"),
+            redis_url=os.getenv("REDIS_URL","redis://mev-redis:6379/0"),
         )
         asyncio.create_task(_monitor.start())
-        logging.info("WSMempoolMonitor starting with %d endpoints: %s", len(endpoints), endpoints)
+        logging.info("WSMempoolMonitor starting: chain=%s endpoints=%s", get_chain_config().chain, endpoints)
     else:
         logging.warning("No WS_POLYGON_* endpoints set; mempool monitor not started.")
-   
-async def _warm():
-    warm_metrics()
 
+    app.state.paused = _read_paused_flag()
+    logging.info("Loaded paused flag from DB: %s", app.state.paused)
+    app.state.bot_state_machine = build_state_machine()
+    if app.state.paused and app.state.bot_state_machine.state != BotState.PAUSED:
+        rec = app.state.bot_state_machine.transition(
+            BotState.PAUSED, actor="system", reason="db_pause_flag", force=True
+        )
+        record_bot_state_transition(rec.from_state, rec.to_state, rec.reason)
+    else:
+        set_bot_state(app.state.bot_state_machine.state.value)
+    app.state.paused = app.state.bot_state_machine.state == BotState.PAUSED
+    set_runtime_state(app.state.bot_state_machine.state)
+    logging.info("Bot state initialized: %s", app.state.bot_state_machine.state.value)
+
+    global _runtime_monitor_task
+    if _runtime_monitor_task is None or _runtime_monitor_task.done():
+        _runtime_monitor_task = asyncio.create_task(_runtime_monitor_loop())
 
 @app.on_event("shutdown")
 async def _shutdown():
+    global _runtime_monitor_task
+    if _runtime_monitor_task and not _runtime_monitor_task.done():
+        _runtime_monitor_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _runtime_monitor_task
+        _runtime_monitor_task = None
     if _monitor:
         await _monitor.stop()
+    stream_obs_redis = getattr(app.state, "_stream_obs_redis", None)
+    if stream_obs_redis is not None:
+        with contextlib.suppress(Exception):
+            await stream_obs_redis.close()
     if getattr(app.state, "alerts", None):
         await app.state.alerts.close()
 
 
-# ---- Health -----------------------------------------------------------------
+async def _runtime_monitor_loop() -> None:
+    monitor_interval_s = max(5.0, float(os.getenv("INVAR_MONITOR_INTERVAL_S", "15")))
+    snapshot_interval_s = max(1.0, float(os.getenv("HEALTH_SNAPSHOT_INTERVAL_S", "10")))
+    interval_s = min(monitor_interval_s, snapshot_interval_s)
+    while True:
+        try:
+            await _observe_chain_progress()
+            await _observe_stream_progress()
+            op_state = get_operator_state()
+            await _maybe_apply_chain_target(str(op_state.get("chain_target", "UNKNOWN")))
+            await _maybe_reload_dex_router(op_state)
+            inv = get_runtime_invariants()
+            target_state, reason = inv.evaluate(operator_state=op_state)
+            target_state, reason = _apply_chain_ready_hold(
+                op_state=op_state,
+                suggested_state=target_state,
+                suggested_reason=reason,
+            )
+            sm = getattr(app.state, "bot_state_machine", None)
+            if sm and sm.state != target_state:
+                rec = sm.transition(target_state, actor="system", reason=f"invariants:{reason}", force=True)
+                record_bot_state_transition(rec.from_state, rec.to_state, rec.reason)
+                set_runtime_state(target_state)
+                app.state.paused = target_state == BotState.PAUSED
+            else:
+                set_bot_state(target_state.value)
+                set_runtime_state(target_state)
+                app.state.paused = target_state == BotState.PAUSED
+
+            cfg = _get_chain_snapshot()
+            set_runtime_bot_state(
+                family=str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm",
+                chain=str(cfg.get("chain", "unknown")),
+                state=target_state.value,
+            )
+            if _health_snapshot_writer is not None:
+                _health_snapshot_writer.maybe_write(
+                    family=str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm",
+                    chain=str(cfg.get("chain", "unknown")),
+                    state=target_state.value,
+                    mode=str(op_state.get("mode", "UNKNOWN")),
+                )
+        except Exception as e:
+            log.warning("runtime monitor loop error: %s", e)
+        await asyncio.sleep(interval_s)
+
+
+def _apply_chain_ready_hold(
+    *,
+    op_state: dict,
+    suggested_state: BotState,
+    suggested_reason: str,
+) -> tuple[BotState, str]:
+    """
+    After a successful chain switch we keep internal state at READY while operator is PAUSED.
+    Trading still remains blocked by operator state until explicit !resume.
+    """
+    hold_target = str(getattr(app.state, "_chain_switch_ready_hold_target", "") or "").strip()
+    op_state_value = str(op_state.get("state", "UNKNOWN")).strip().upper()
+    if op_state_value == BotState.TRADING.value:
+        app.state._chain_switch_ready_hold_target = ""
+        return suggested_state, suggested_reason
+    if not hold_target:
+        return suggested_state, suggested_reason
+
+    sm = getattr(app.state, "bot_state_machine", None)
+    current_state = sm.state if sm else get_runtime_state(BotState.PAUSED)
+    if (
+        current_state == BotState.READY
+        and suggested_state == BotState.PAUSED
+        and str(suggested_reason) == "operator_not_trading"
+    ):
+        return BotState.READY, "chain_switch_ready_hold"
+    return suggested_state, suggested_reason
+
+
+def _provider_name(url: str) -> str:
+    try:
+        return (urlparse(str(url or "")).hostname or "rpc").lower()
+    except Exception:
+        return "rpc"
+
+
+def _sol_get_slot(endpoint: str) -> int:
+    resp = requests.post(
+        endpoint,
+        json={"jsonrpc": "2.0", "id": 1, "method": "getSlot", "params": []},
+        timeout=8,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    if isinstance(body, dict) and body.get("error"):
+        raise RuntimeError(f"sol getSlot error: {body['error']}")
+    return int(body.get("result") or 0)
+
+
+async def _observe_chain_progress() -> None:
+    cfg = _get_chain_snapshot()
+    family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
+    chain = str(cfg.get("chain", "unknown")).strip().lower() or "unknown"
+    provider = _provider_name(str(cfg.get("rpc_http_selected", "")))
+    now = time.time()
+
+    set_heartbeat(family=family, chain=chain, unix_ts=now)
+
+    # Gate expensive RPC polling to a configurable cadence.
+    obs_interval_s = max(2.0, float(os.getenv("CHAIN_OBSERVE_INTERVAL_S", "10")))
+    next_due = float(getattr(app.state, "_chain_obs_next_due", 0.0) or 0.0)
+    if now < next_due:
+        return
+    app.state._chain_obs_next_due = now + obs_interval_s
+
+    if family == "evm":
+        head = None
+        provider_for_head = provider
+        rpc_candidates: List[str] = []
+        primary = str(cfg.get("rpc_http_selected", "")).strip()
+        if primary:
+            rpc_candidates.append(primary)
+        with contextlib.suppress(Exception):
+            c = get_chain_config()
+            for ep in [c.rpc_http] + list(c.rpc_http_backups):
+                ep = str(ep).strip()
+                if ep and ep not in rpc_candidates:
+                    rpc_candidates.append(ep)
+        for ep in rpc_candidates:
+            try:
+                w3 = getattr(app.state, "w3", None) if ep == primary else Web3(
+                    HTTPProvider(ep, request_kwargs={"timeout": 8})
+                )
+                if not w3:
+                    continue
+                head = int(await asyncio.to_thread(lambda w=w3: w.eth.block_number))
+                provider_for_head = _provider_name(ep)
+                if ep != primary:
+                    app.state.w3 = w3
+                break
+            except Exception:
+                continue
+        if head is None:
+            log.debug("chain head observe failed: no reachable RPC candidate")
+            return
+        try:
+            prev = getattr(app.state, "_chain_obs_last_head", None)
+            max_seen = int(getattr(app.state, "_chain_obs_max_head", head) or head)
+            max_seen = max(max_seen, head)
+            app.state._chain_obs_max_head = max_seen
+            app.state._chain_obs_last_head = head
+            set_chain_head(family=family, chain=chain, provider=provider_for_head, height=head)
+            set_head_lag(
+                family=family,
+                chain=chain,
+                provider=provider_for_head,
+                blocks=max(0, max_seen - head),
+            )
+            # Slot metric is not meaningful for EVM chains.
+            set_chain_slot(family=family, chain=chain, provider=provider_for_head, slot=0)
+            set_slot_lag(family=family, chain=chain, provider=provider_for_head, lag=0)
+            if prev is None or head > int(prev):
+                app.state._chain_obs_last_advance_ts = now
+        except Exception as e:
+            log.debug("chain head observe failed: %s", e)
+        return
+
+    if family == "sol":
+        endpoint = str(cfg.get("rpc_http_selected", "")).strip()
+        if not endpoint:
+            return
+        try:
+            slot = int(await asyncio.to_thread(_sol_get_slot, endpoint))
+            prev = getattr(app.state, "_chain_obs_last_slot", None)
+            max_seen = int(getattr(app.state, "_chain_obs_max_slot", slot) or slot)
+            max_seen = max(max_seen, slot)
+            app.state._chain_obs_max_slot = max_seen
+            app.state._chain_obs_last_slot = slot
+            set_chain_slot(family=family, chain=chain, provider=provider, slot=slot)
+            set_slot_lag(family=family, chain=chain, provider=provider, lag=max(0, max_seen - slot))
+            # Head metric is not meaningful for slot-based chains.
+            set_chain_head(family=family, chain=chain, provider=provider, height=0)
+            set_head_lag(family=family, chain=chain, provider=provider, blocks=0)
+            if prev is None or slot > int(prev):
+                app.state._chain_obs_last_advance_ts = now
+        except Exception as e:
+            log.debug("chain slot observe failed: %s", e)
+
+async def _observe_stream_progress() -> None:
+    stream = str(os.getenv("REDIS_STREAM", "mempool:pending:txs")).strip() or "mempool:pending:txs"
+    redis_url = str(os.getenv("REDIS_URL", "redis://redis:6379/0")).strip() or "redis://redis:6379/0"
+    r = getattr(app.state, "_stream_obs_redis", None)
+    if r is None:
+        r = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=False)
+        app.state._stream_obs_redis = r
+    try:
+        xlen = int(await r.xlen(stream))
+        prev = getattr(app.state, "_stream_obs_prev_xlen", None)
+        app.state._stream_obs_prev_xlen = xlen
+        if prev is None:
+            return
+        delta = max(0, xlen - int(prev))
+        if delta > 0:
+            record_stream_events_observed(stream=stream, count=delta, source="api_probe")
+    except Exception as e:
+        log.debug("stream observe failed: %s", e)
+
+
+async def _maybe_apply_chain_target(chain_target: str) -> None:
+    target = canonicalize_chain_target(chain_target)
+    if target == "UNKNOWN":
+        return
+    last_target = str(getattr(app.state, "_last_chain_target", "") or "")
+    if last_target == target:
+        return
+
+    old_chain = _get_chain_snapshot().get("chain", "unknown")
+    try:
+        app.state._chain_switch_ready_hold_target = ""
+        _transition_state(BotState.PAUSED, actor="system", reason=f"chain_switch_pause:{target}", force=True)
+        _transition_state(BotState.SYNCING, actor="system", reason=f"chain_switch_syncing:{target}", force=True)
+        _emit_chain_switch_labels_now(
+            state=BotState.SYNCING,
+            mode=str(get_operator_state().get("mode", "UNKNOWN")),
+        )
+        await _reload_chain_runtime(target)
+        sel = parse_chain_selection(target)
+        val = await asyncio.to_thread(validate_chain_selection, sel)
+        dex_validation = await asyncio.to_thread(
+            _validate_dex_profiles_for_chain,
+            family=sel.family.lower(),
+            chain=sel.chain,
+        )
+        if not bool(dex_validation.get("ok", False)):
+            raise RuntimeError(f"dex_profile_validation_failed:{'|'.join(dex_validation.get('errors', []))}")
+        warm_result = await asyncio.to_thread(
+            _warm_dex_pack_cache,
+            family=sel.family.lower(),
+            chain=sel.chain,
+        )
+        if not bool(warm_result.get("ok", True)):
+            log.warning("dex_warmup_partial chain=%s errors=%s", target, warm_result.get("errors", []))
+        _transition_state(BotState.READY, actor="system", reason=f"chain_switch_ready:{target}", force=True)
+        _emit_chain_switch_labels_now(
+            state=BotState.READY,
+            mode=str(get_operator_state().get("mode", "UNKNOWN")),
+        )
+        app.state._chain_switch_ready_hold_target = target
+        app.state._last_chain_target = target
+        log.info(
+            "chain_switch_validation old=%s new=%s result=ok endpoint=%s wallet=%s balance=%s dex_validated=%s dex_warm_ok=%s",
+            old_chain,
+            target,
+            str(val.get("endpoint", "")),
+            str(val.get("wallet", "")),
+            str(val.get("balance", "")),
+            int(dex_validation.get("validated", 0)),
+            int(warm_result.get("ok_count", 0)),
+        )
+    except Exception as e:
+        _transition_state(BotState.DEGRADED, actor="system", reason=f"chain_switch_failed:{target}", force=True)
+        app.state._chain_switch_ready_hold_target = ""
+        app.state._last_chain_target = target
+        log.warning("chain_switch_validation old=%s new=%s result=fail error=%s", old_chain, target, e)
+
+# ---- Health ----
 @app.get("/health")
 def health():
+    cfg = _get_chain_snapshot()
+    family, chain, network = canonicalize_labels(family=os.getenv("CHAIN_FAMILY", "evm"), chain=cfg["chain"])
+    ws_connected_endpoint = getattr(_monitor, "connected_endpoint", None) if _monitor else None
+    state_machine = getattr(app.state, "bot_state_machine", None)
+    state = state_machine.state.value if state_machine else ("PAUSED" if bool(getattr(app.state, "paused", False)) else "READY")
     return {
         "ok": True,
         "time": int(time.time()),
-        "w3_connected": bool(getattr(app.state, "w3", None) and app.state.w3.is_connected()),
-        # treat monitor as present if we created it; some classes don’t expose .running
+        "w3_connected": bool(getattr(app.state,"w3",None) and app.state.w3.is_connected()),
         "mempool_monitor": bool(_monitor),
-        "endpoints": _ws_env_endpoints(),
+        "chain_family": family,
+        "chain": chain,
+        "network": network,
+        "chain_id": cfg["chain_id"],
+        "rpc_http_selected": cfg["rpc_http_selected"],
+        "ws_endpoints_selected": cfg["ws_endpoints_selected"],
+        "ws_connected_endpoint": ws_connected_endpoint,
+        # backward-compatible keys
+        "endpoints": cfg["ws_endpoints_selected"],
+        "rpc_http": cfg["rpc_http_selected"],
+        "paused": bool(getattr(app.state, "paused", False)),
+        "state": state,
     }
 
+@app.get("/debug/mempool")
+async def debug_mempool():
+    import time as _time
+    import redis.asyncio as aioredis
+
+    stream = os.getenv("REDIS_STREAM", "mempool:pending:txs")
+    group = os.getenv("REDIS_GROUP", "mempool")
+    r = aioredis.from_url(os.getenv("REDIS_URL","redis://redis:6379/0"))
+
+    xlen = await r.xlen(stream)
+    groups = await r.xinfo_groups(stream)
+    last = await r.xrevrange(stream, count=1)
+    prod_info = await r.hgetall("mempool:producer")
+
+    last_age_s = None
+    if last:
+        _id, fields = last[0]
+        try:
+            ts_ms = fields.get(b"ts_ms") if isinstance(fields, dict) else None
+            if ts_ms is None and isinstance(fields, dict):
+                ts_ms = fields.get("ts_ms")
+            if ts_ms is not None:
+                ts_ms = int(ts_ms)
+                last_age_s = max(0.0, (_time.time()*1000.0 - ts_ms) / 1000.0)
+        except Exception:
+            last_age_s = None
+
+    def _counter_value(c):
+        try:
+            return float(c._value.get())
+        except Exception:
+            return None
+
+    out = {
+        "stream": stream,
+        "xlen": xlen,
+        "groups": groups,
+        "last_entry_age_s": last_age_s,
+        "producer_endpoint": (prod_info.get(b"endpoint") or prod_info.get("endpoint") or "").decode() if isinstance(prod_info.get(b"endpoint"), (bytes, bytearray)) else (prod_info.get("endpoint") or prod_info.get(b"endpoint") or ""),
+        "producer_last_ts_ms": (prod_info.get(b"ts_ms") or prod_info.get("ts_ms") or None),
+        "rpc_gettx_ok_total": _counter_value(rpc_gettx_ok_total),
+        "rpc_gettx_errors_total": _counter_value(rpc_gettx_errors_total),
+    }
+
+    await r.close()
+    return out
+
+@app.get("/debug/db_stats")
+def debug_db_stats():
+    import psycopg
+
+    q = """
+    SELECT
+      (SELECT COUNT(*) FROM mempool_events WHERE created_at >= now() - interval '10 minutes') AS events_10m,
+      (SELECT COUNT(*) FROM mempool_tx WHERE last_seen_ts_ms >= (extract(epoch from now() - interval '10 minutes') * 1000)::bigint) AS tx_10m,
+      (SELECT COUNT(*) FROM mempool_errors WHERE created_at >= now() - interval '10 minutes') AS errors_10m,
+      (SELECT COUNT(*) FROM mempool_events) AS events_total,
+      (SELECT COUNT(*) FROM mempool_tx) AS tx_total,
+      (SELECT COUNT(*) FROM mempool_errors) AS errors_total
+    """
+    try:
+        with _db_connect() as conn:
+            row = conn.execute(q).fetchone()
+            return {
+                "ok": True,
+                "events_10m": int(row[0]),
+                "tx_10m": int(row[1]),
+                "errors_10m": int(row[2]),
+                "events_total": int(row[3]),
+                "tx_total": int(row[4]),
+                "errors_total": int(row[5]),
+            }
+    except psycopg.errors.UndefinedTable as e:
+        raise HTTPException(status_code=503, detail=f"missing mempool tables: {e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db_stats query failed: {e}") from e
+
+@app.get("/candidates")
+def list_candidates():
+    q = """
+    SELECT id, ts_ms, tx_hash, kind, score, notes, created_at
+    FROM candidates
+    ORDER BY created_at DESC
+    LIMIT 50
+    """
+    try:
+        with _db_connect() as conn:
+            rows = conn.execute(q).fetchall()
+            return {
+                "ok": True,
+                "items": [
+                    {
+                        "id": int(r[0]),
+                        "ts_ms": int(r[1]),
+                        "tx_hash": r[2],
+                        "kind": r[3],
+                        "score": float(r[4]),
+                        "notes": r[5] if isinstance(r[5], dict) else {},
+                        "created_at": r[6].isoformat() if r[6] else None,
+                    }
+                    for r in rows
+                ],
+            }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"candidates query failed: {e}") from e
+
+@app.get("/debug/candidates")
+def debug_candidates(limit: int = 50):
+    safe_limit = max(1, min(int(limit), 200))
+    q = """
+    SELECT
+      id, ts_ms, tx_hash, kind, score, notes, created_at,
+      chain, seen_ts, to_addr, decoded_method, venue_tag,
+      estimated_gas, estimated_edge_bps, sim_ok, pnl_est, decision, reject_reason
+    FROM candidates
+    ORDER BY created_at DESC
+    LIMIT %s
+    """
+    try:
+        with _db_connect() as conn:
+            rows = conn.execute(q, (safe_limit,)).fetchall()
+            return {
+                "ok": True,
+                "limit": safe_limit,
+                "items": [
+                    {
+                        "id": int(r[0]),
+                        "ts_ms": int(r[1]),
+                        "tx_hash": r[2],
+                        "kind": r[3],
+                        "score": float(r[4]) if r[4] is not None else None,
+                        "notes": r[5] if isinstance(r[5], dict) else {},
+                        "created_at": r[6].isoformat() if r[6] else None,
+                        "chain": r[7],
+                        "seen_ts": int(r[8]) if r[8] is not None else None,
+                        "to": r[9],
+                        "decoded_method": r[10],
+                        "venue_tag": r[11],
+                        "estimated_gas": int(r[12]) if r[12] is not None else None,
+                        "estimated_edge_bps": float(r[13]) if r[13] is not None else None,
+                        "sim_ok": bool(r[14]) if r[14] is not None else None,
+                        "pnl_est": float(r[15]) if r[15] is not None else None,
+                        "decision": r[16],
+                        "reject_reason": r[17],
+                    }
+                    for r in rows
+                ],
+            }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"debug candidates query failed: {e}") from e
+
+@app.get("/debug/decisions")
+def debug_decisions():
+    q = """
+    SELECT
+      COALESCE(decision, 'UNKNOWN') AS decision,
+      COALESCE(reject_reason, 'none') AS reject_reason,
+      COUNT(*)::bigint AS c
+    FROM candidates
+    WHERE created_at >= now() - interval '24 hours'
+    GROUP BY 1, 2
+    ORDER BY c DESC, decision ASC, reject_reason ASC
+    """
+    try:
+        with _db_connect() as conn:
+            rows = conn.execute(q).fetchall()
+            total = int(sum(int(r[2]) for r in rows))
+            return {
+                "ok": True,
+                "window": "24h",
+                "total": total,
+                "items": [
+                    {
+                        "decision": str(r[0]),
+                        "reject_reason": str(r[1]),
+                        "count": int(r[2]),
+                    }
+                    for r in rows
+                ],
+            }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"debug decisions query failed: {e}") from e
+
+@app.get("/paper_report")
+def paper_report():
+    q = """
+    WITH c AS (
+      SELECT id, created_at
+      FROM candidates
+      WHERE created_at >= now() - interval '24 hours'
+    ),
+    o AS (
+      SELECT candidate_id, mined_block, success, gas_used, effective_gas_price, observed_after_sec, created_at
+      FROM candidates_outcomes
+      WHERE created_at >= now() - interval '24 hours'
+    )
+    SELECT
+      (SELECT count(*) FROM c) AS candidates_24h,
+      (SELECT count(*) FROM o) AS outcomes_24h,
+      (SELECT count(*) FROM o WHERE mined_block IS NOT NULL) AS mined_24h,
+      (SELECT count(*) FROM o WHERE success IS TRUE) AS success_24h,
+      (SELECT avg(observed_after_sec) FROM o) AS avg_inclusion_delay_s,
+      (SELECT avg(gas_used) FROM o WHERE gas_used IS NOT NULL) AS avg_gas_used,
+      (SELECT avg(effective_gas_price) FROM o WHERE effective_gas_price IS NOT NULL) AS avg_effective_gas_price
+    """
+    try:
+        with _db_connect() as conn:
+            row = conn.execute(q).fetchone()
+            candidates_24h = int(row[0] or 0)
+            outcomes_24h = int(row[1] or 0)
+            mined_24h = int(row[2] or 0)
+            success_24h = int(row[3] or 0)
+            success_rate = (float(success_24h) / float(mined_24h)) if mined_24h > 0 else 0.0
+            return {
+                "ok": True,
+                "window": "24h",
+                "candidates_24h": candidates_24h,
+                "outcomes_24h": outcomes_24h,
+                "mined_24h": mined_24h,
+                "success_24h": success_24h,
+                "success_rate": success_rate,
+                "avg_inclusion_delay_s": float(row[4]) if row[4] is not None else None,
+                "avg_gas_used": float(row[5]) if row[5] is not None else None,
+                "avg_effective_gas_price": float(row[6]) if row[6] is not None else None,
+            }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"paper_report query failed: {e}") from e
+
+
+@app.post("/pause")
+def pause_trading():
+    try:
+        return _transition_state(BotState.PAUSED, actor="manual", reason="api_pause")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"failed to persist paused=true: {e}") from e
+
+
+@app.post("/resume")
+def resume_trading():
+    try:
+        return _transition_state(BotState.TRADING, actor="manual", reason="api_resume")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"failed to persist paused=false: {e}") from e
+
+
+@app.post("/state/{target}")
+def set_state(target: str, actor: str = "manual", reason: str = "api_state_set", force: bool = False):
+    try:
+        parsed = parse_bot_state(target)
+        return _transition_state(parsed, actor=actor, reason=reason, force=force)
+    except ValueError as e:
+        msg = str(e)
+        code = 409 if "invalid state transition" in msg or "blocked by BOT_STATE_LOCKDOWN" in msg else 400
+        raise HTTPException(status_code=code, detail=msg) from e
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"failed to set state={target}: {e}") from e
+
+
+@app.post("/chain/select")
+async def select_chain(name: str):
+    try:
+        data = await _reload_chain_runtime(name)
+        return {"ok": True, **data}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"failed to select chain '{name}': {e}") from e
+
+# ---- Debug endpoints ----
+@app.post("/debug/bump")
+def bump():
+    mempool_unique_tx_total.labels(**canonical_metric_labels()).inc()
+    return {"ok": True}
+
+@app.post("/debug/private-submit/ok")
+def debug_private_submit_ok(endpoint: str = "demo"):
+    chain = os.getenv("CHAIN","any")
+    private_submit_attempts.labels(relay=endpoint, chain=chain, reason="selected").inc()
+    private_submit_success.labels(relay=endpoint, chain=chain).inc()
+    return {"ok": True, "endpoint": endpoint}
+
+@app.post("/debug/private-submit/fail")
+def debug_private_submit_fail(endpoint: str = "demo", kind: str = "http_500"):
+    chain = os.getenv("CHAIN","any")
+    private_submit_attempts.labels(relay=endpoint, chain=chain, reason="selected").inc()
+    private_submit_errors.labels(relay=endpoint, chain=chain, code=kind).inc()
+    return {"ok": False, "endpoint": endpoint, "kind": kind}
+
+# ---- Stubbed stealth smoke ----
+@app.post("/_smoke/stealth")
+async def smoke_stealth():
+    import bot.exec.orderflow as of
+    class _R:
+        def __init__(self, ok=True, relay="mev_blocker"):
+            self.ok = ok; self.tx_hash = "0xSMOKE"; self.relay = relay
+            self.error=None; self.gas_used=120_000; self.gas_price_gwei=25.0
+    class OK:
+        def __init__(self, name, chain): self.name=name; self.chain=chain
+        async def submit_raw(self, tx_hex, metadata): return _R(True, self.name)
+        def is_retryable(self, e): return False
+        def classify_reason(self, e): return "none"
+    class Flaky:
+        def __init__(self, name, chain): self.name=name; self.chain=chain; self.calls=0
+        async def submit_raw(self, tx_hex, metadata):
+            self.calls += 1
+            return _R(ok=self.calls>1, relay=self.name)
+        def is_retryable(self, e): return True
+        def classify_reason(self, e): return "temporary"
+
+    of.FlashbotsClient  = lambda chain, url: Flaky("flashbots_protect", chain)
+    of.MevBlockerClient = lambda chain, url: OK("mev_blocker", chain)
+    of.CowClient        = lambda chain, url: OK("cow_protocol", chain)
+
+    strat = StealthStrategy()
+    params = {
+        "chain": os.getenv("CHAIN","sepolia"),
+        "token_in":"USDC","token_out":"TOKENX",
+        "amount_in":1_000_000,"desired_output":100_000,"max_input":1_200_000,
+        "router":"0xRouterV3","sender":"0xSender","recipient":"0xRecipient",
+        "pool_fee":3000,"size_usd":8000.0,"eth_usd":2500.0,"detected_snipers":1
+    }
+    results=[]
+    for _ in range(3):
+        r = await strat.execute_stealth_swap(params)
+        results.append({"success": r.success, "relay": r.notes.get("relay"), "gas_ratio": r.notes.get("gas_cost_ratio")})
+    return {"ok": all(x["success"] for x in results), "results": results}
+
+
+from fastapi.responses import JSONResponse
+
+@app.post("/_smoke/tick")
+def _smoke_tick():
+    try:
+        # bump the key series so Grafana/Prom show non-zero
+        from bot.core.telemetry import (
+            stealth_decisions_total,
+            orchestrator_decisions_total,
+            relay_attempts_total,
+            relay_success_total,
+        )
+        chain = os.getenv("CHAIN", "polygon")
+        stealth_decisions_total.labels(decision="go").inc()
+        orchestrator_decisions_total.labels(mode="stealth", reason="ok").inc()
+        relay_attempts_total.labels(relay="mev_blocker", chain=chain).inc()
+        relay_success_total.labels(relay="mev_blocker", chain=chain).inc()
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+@app.post("/_smoke/stealth2")
+async def _smoke_stealth2():
+    try:
+        # light up stealth + private orderflow metrics without importing full strategy/relays
+        from bot.core.telemetry import (
+            stealth_trigger_flags_total,
+            stealth_flags_count,
+            private_submit_attempts,
+            private_submit_success,
+            stealth_decisions_total,
+        )
+        chain = os.getenv("CHAIN", "polygon")
+
+        # pretend 5 flags fired
+        for f in ("high_slippage","new_token","low_liquidity","trending","active_snipers"):
+            stealth_trigger_flags_total.labels(flag=f).inc()
+        stealth_flags_count.set(5)
+
+        # pretend we routed to mev_blocker and it worked
+        private_submit_attempts.labels(relay="mev_blocker", chain=chain, reason="selected").inc()
+        private_submit_success.labels(relay="mev_blocker", chain=chain).inc()
+
+        # decide GO once
+        stealth_decisions_total.labels(decision="go").inc()
+        return {"ok": True, "stubbed": True}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

@@ -1,0 +1,154 @@
+{
+  "dashboard": {
+    "id": 1233092447907840,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "mevbot_mempool_tpm"
+          }
+        ],
+        "title": "Mempool TPM (rolling 60s)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "mevbot_mempool_tps"
+          }
+        ],
+        "title": "Mempool TPS (rolling 60s)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 16,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "rate(mevbot_mempool_unique_tx_total[5m])"
+          }
+        ],
+        "title": "Unique Pending TX (rate)",
+        "type": "timeSeries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "mepool_ws_connected"
+          }
+        ],
+        "title": "WS Connected (by endpoint)",
+        "type": "timeSeries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 16,
+          "x": 8,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "sum by (endpoint,method) (increase(mevbot_orderflow_submit_success_total[5m]))"
+          }
+        ],
+        "title": "Orderflow Success (per endpoint/method)",
+        "type": "timeSeries"
+      },
+      {
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 0,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "sum by (kind) (increase(mevbot_sim_single_fail_total[15m]))"
+          }
+        ],
+        "title": "Simulator Failures (single) by kind",
+        "type": "bargauge"
+      },
+      {
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 8,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "sum by (kind) (increase(mevbot_sim_bundle_fail_total[15m]))"
+          }
+        ],
+        "title": "Simulator Failures (bundle) by kind",
+        "type": "bargauge"
+      }
+    ],
+    "schemaVersion": 39,
+    "timezone": "browser",
+    "title": "MEV Bot Overview",
+    "uid": "6c18600d-656c-4598-a270-06b02ebbb6a8",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "mev-bot-overview.json",
+    "slug": "mev-bot-overview",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/6c18600d-656c-4598-a270-06b02ebbb6a8/mev-bot-overview",
+    "version": 1
+  }
+}

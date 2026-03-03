@@ -1,0 +1,42 @@
+apiVersion: 1
+providers:
+  - name: "MEV Operator Dashboards"
+    orgId: 1
+    folder: "00 Operator"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/00-operator
+      foldersFromFilesStructure: false
+  - name: "MEV Execution Dashboards"
+    orgId: 1
+    folder: "10 Execution"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/10-execution
+      foldersFromFilesStructure: false
+  - name: "MEV Strategy Dashboards"
+    orgId: 1
+    folder: "20 Strategy"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/20-strategy
+      foldersFromFilesStructure: false
+  - name: "MEV Infra Dashboards"
+    orgId: 1
+    folder: "90 Infra"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/90-infra
+      foldersFromFilesStructure: false

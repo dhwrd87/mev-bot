@@ -1,0 +1,13 @@
+{
+  "chain": "solana",
+  "family": "sol",
+  "network": "devnet",
+  "enabled_dex_packs": ["jupiter_main"],
+  "dex_packs": {
+    "jupiter_main": {
+      "type": "jupiter",
+      "base_url": "https://quote-api.jup.ag/v6",
+      "api_key": "${JUPITER_API_KEY}"
+    }
+  }
+}

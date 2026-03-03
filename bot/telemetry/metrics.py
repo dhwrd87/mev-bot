@@ -1,7 +1,9 @@
 # bot/telemetry/metrics.py
 import os
 from prometheus_client import Counter, Gauge, Histogram
-
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest, multiprocess
+from starlette.responses import Response
+from bot.core.telemetry import ensure_prometheus_multiproc_ready
 CHAIN = os.getenv("CHAIN", "polygon")
 
 WS_CONNECTIONS = Gauge("ws_connections", "Active WS mempool connections")
@@ -44,3 +46,14 @@ def mount_metrics(app, route: str = "/metrics"):
     app.mount(path, make_asgi_app())
 
 
+def _registry_for_this_process():
+    if ensure_prometheus_multiproc_ready():
+        reg = CollectorRegistry()
+        multiprocess.MultiProcessCollector(reg)
+        return reg
+    from prometheus_client import REGISTRY
+    return REGISTRY
+
+async def metrics_endpoint(_req):
+    return Response(generate_latest(_registry_for_this_process()),
+                    media_type=CONTENT_TYPE_LATEST)

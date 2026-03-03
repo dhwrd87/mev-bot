@@ -1,0 +1,193 @@
+{
+  "dashboard": {
+    "id": 1233092955418624,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum by (strategy,chain) (last_over_time(mevbot_pnl_realized_usd{family=~\"$family\",chain=~\"$chain\"}[24h]))",
+            "legendFormat": "{{strategy}} @ {{chain}}",
+            "refId": "A"
+          }
+        ],
+        "title": "PnL by Strategy/Chain (24h)",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum by (dex,chain) (increase(mevbot_opportunities_filled_total{family=~\"$family\",chain=~\"$chain\"}[24h]))",
+            "legendFormat": "{{dex}} @ {{chain}}",
+            "refId": "A"
+          }
+        ],
+        "title": "PnL Proxy by DEX/Chain (filled opportunities, 24h)",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 7
+        },
+        "targets": [
+          {
+            "expr": "sum by (le) (rate(mevbot_edge_bps_bucket{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "format": "heatmap",
+            "refId": "A"
+          }
+        ],
+        "title": "Edge BPS Distribution",
+        "type": "heatmap"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 7
+        },
+        "targets": [
+          {
+            "expr": "sum by (le) (rate(mevbot_slippage_bps_bucket{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "format": "heatmap",
+            "refId": "A"
+          }
+        ],
+        "title": "Slippage Distribution (bps)",
+        "type": "heatmap"
+      },
+      {
+        "gridPos": {
+          "h": 7,
+          "w": 24,
+          "x": 0,
+          "y": 15
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(mevbot_opportunities_seen_total{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "legendFormat": "seen",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(increase(mevbot_opportunities_attempted_total{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "legendFormat": "attempted",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(increase(mevbot_opportunities_filled_total{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "legendFormat": "filled",
+            "refId": "C"
+          },
+          {
+            "expr": "sum(increase(mevbot_sim_fail_total{family=~\"$family\",chain=~\"$chain\"}[10m]))",
+            "legendFormat": "sim_fail",
+            "refId": "D"
+          }
+        ],
+        "title": "Opportunities Funnel (10m)",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 39,
+    "tags": [
+      "strategy",
+      "analytics",
+      "mev"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": true,
+            "text": [
+              "All"
+            ],
+            "value": [
+              "$__all"
+            ]
+          },
+          "datasource": "Prometheus",
+          "includeAll": true,
+          "multi": true,
+          "name": "family",
+          "query": "label_values(mevbot_opportunities_seen_total, family)",
+          "type": "query"
+        },
+        {
+          "current": {
+            "selected": true,
+            "text": [
+              "All"
+            ],
+            "value": [
+              "$__all"
+            ]
+          },
+          "datasource": "Prometheus",
+          "includeAll": true,
+          "multi": true,
+          "name": "chain",
+          "query": "label_values(mevbot_opportunities_seen_total, chain)",
+          "type": "query"
+        }
+      ]
+    },
+    "timezone": "browser",
+    "title": "Strategy Analytics",
+    "uid": "strategy-analytics",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "strategy_analytics.json",
+    "slug": "strategy-analytics",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/strategy-analytics/strategy-analytics",
+    "version": 1
+  }
+}

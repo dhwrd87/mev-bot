@@ -1,0 +1,64 @@
+{
+  "family": "evm",
+  "chain": "avalanche-fuji",
+  "network": "testnet",
+  "chain_id": 43113,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://avalanche-fuji-c-chain-rpc.publicnode.com",
+        "ws": "wss://avalanche-fuji-c-chain-rpc.publicnode.com"
+      },
+      {
+        "alias": "avax",
+        "http": "https://api.avax-test.network/ext/bc/C/rpc",
+        "ws": "wss://api.avax-test.network/ext/bc/C/ws"
+      },
+      {
+        "alias": "infura",
+        "http": "https://avalanche-fuji.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://avalanche-fuji.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://testnet.snowtrace.io",
+    "tx_url": "https://testnet.snowtrace.io/tx/{tx_hash}",
+    "address_url": "https://testnet.snowtrace.io/address/{address}",
+    "block_url": "https://testnet.snowtrace.io/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "AVAX",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${FUJI_UNIV2_ROUTER}",
+      "factory": "${FUJI_UNIV2_FACTORY}",
+      "fee_bps": 30
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${FUJI_UNIV3_FACTORY}",
+      "quoter": "${FUJI_UNIV3_QUOTER}",
+      "swap_router": "${FUJI_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        500,
+        3000,
+        10000
+      ]
+    }
+  }
+}

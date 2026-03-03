@@ -1,0 +1,64 @@
+{
+  "family": "evm",
+  "chain": "arbitrum",
+  "network": "mainnet",
+  "chain_id": 42161,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://arbitrum-one-rpc.publicnode.com",
+        "ws": "wss://arbitrum-one-rpc.publicnode.com"
+      },
+      {
+        "alias": "arb",
+        "http": "https://arb1.arbitrum.io/rpc",
+        "ws": "wss://arb1.arbitrum.io/ws"
+      },
+      {
+        "alias": "infura",
+        "http": "https://arbitrum-mainnet.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://arbitrum-mainnet.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://arbiscan.io",
+    "tx_url": "https://arbiscan.io/tx/{tx_hash}",
+    "address_url": "https://arbiscan.io/address/{address}",
+    "block_url": "https://arbiscan.io/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "ETH",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${ARB_UNIV2_ROUTER}",
+      "factory": "${ARB_UNIV2_FACTORY}",
+      "fee_bps": 30
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${ARB_UNIV3_FACTORY}",
+      "quoter": "${ARB_UNIV3_QUOTER}",
+      "swap_router": "${ARB_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        500,
+        3000,
+        10000
+      ]
+    }
+  }
+}

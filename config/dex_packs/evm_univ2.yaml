@@ -1,0 +1,6 @@
+{
+  "type": "evm_univ2",
+  "router": "${UNIV2_ROUTER}",
+  "factory": "${UNIV2_FACTORY}",
+  "fee_bps": 30
+}

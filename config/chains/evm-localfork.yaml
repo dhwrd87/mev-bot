@@ -1,0 +1,11 @@
+{
+  "family": "evm",
+  "chain": "localfork",
+  "network": "testnet",
+  "chain_id": 31337,
+  "default_rpc_http": "http://anvil:8545",
+  "default_rpc_http_backups": [],
+  "default_ws_endpoints": ["ws://anvil:8545"],
+  "explorer_base_url": "http://anvil.local",
+  "native_symbol": "ETH"
+}

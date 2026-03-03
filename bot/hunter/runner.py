@@ -10,7 +10,7 @@ from bot.hunter.executor import BackrunExecutor
 from bot.route.selector import RouteSelector
 from bot.quote.sizer import OptimalTradeSizer, SizingCaps
 from bot.quote.v3_quoter import V3Quoter
-from bot.telemetry.metrics import (FLAGGED_SNIPER_TOTAL, SIM_REJECT_TOTAL,
+from bot.core.telemetry import (FLAGGED_SNIPER_TOTAL, SIM_REJECT_TOTAL,
                                    BACKRUN_SUBMIT_TOTAL, BACKRUN_SUCCESS_TOTAL,
                                    DETECT_LATENCY_MS, SUBMIT_LATENCY_MS)
 from time import perf_counter

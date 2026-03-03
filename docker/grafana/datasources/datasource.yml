@@ -4,6 +4,6 @@ datasources:
     type: prometheus
     access: proxy
     url: http://mev-prometheus:9090
-    isDefault: false
+    isDefault: true
     jsonData:
       timeInterval: 5s

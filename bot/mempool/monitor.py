@@ -1,188 +1,193 @@
-import asyncio, json, os, random, time, inspect, websockets
-from collections import deque
-from typing import List, Optional, Set, Tuple
- 
-from websockets.exceptions import ConnectionClosed, WebSocketException
-from prometheus_client import start_http_server
+from __future__ import annotations
 
-from bot.core.telemetry import (
-    mempool_rx_total, mempool_rx_errors_total, mempool_reconnects_total,
-    mempool_ws_connected, mempool_unique_tx_total, mempool_tps, mempool_tpm,
-    mempool_message_latency_ms, mempool_stream_publish_total,
-    mempool_stream_publish_errors_total,
-)
-
-from bot.telemetry.metrics import (
-    PENDING_TX_TOTAL, WS_CONNECTIONS, CHAIN, PENDING_TX_TOTAL
-)
-
+import asyncio
+import inspect
+import json
+import logging
 import os
-CHAIN = os.getenv("CHAIN","polygon")
+import time
+from collections import deque
+from typing import Any, Deque, Iterable, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
+import websockets  # patched by tests or real WS
 
-# Prefer async Redis; fall back to sync client
+logger = logging.getLogger("bot.mempool.monitor")
+
+# metrics are optional; fall back to no-ops if not wired
 try:
-    import redis.asyncio as aioredis  # redis>=4.2
+    from bot.metrics import mempool_unique_tx_total
 except Exception:  # pragma: no cover
-    aioredis = None
+    class _Noop:
+        def inc(self, *a, **k): pass
+    mempool_unique_tx_total = _Noop()
+
 try:
-    import redis  # sync fallback
+    from bot.core.telemetry import canonical_metric_labels
+
+    _CHAIN_METRIC_LABELS = canonical_metric_labels()
 except Exception:  # pragma: no cover
-    redis = None
+    _CHAIN_METRIC_LABELS = {}
+
+# --- helpers ---------------------------------------------------------------
+
+def _get_ws_endpoints_from_env() -> List[str]:
+    from bot.core.chain_config import get_chain_config
+    return get_chain_config().ws_endpoints
+
+def _subscribe_payload_for(endpoint: str) -> str:
+    host = (urlparse(endpoint).hostname or "").lower()
+    if "alchemy.com" in host:
+        return json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "alchemy_subscribe",
+            "params": ["alchemy_pendingTransactions", {}],
+        })
+    return json.dumps(SUBSCRIBE_MSG)
+
 
 SUBSCRIBE_MSG = {
     "jsonrpc": "2.0",
     "id": 1,
     "method": "eth_subscribe",
     "params": ["newPendingTransactions"],
-    }
-# Some providers support "full" for tx bodies; we stick to hashes for speed
-# "params": ["newPendingTransactions", {"includeTxArgs": False}]
+}
 
-async def _connect_one(self, url: str):
-    try:
-        # ... open ws ...
-        WS_CONNECTIONS.inc()          # on connect
-        # subscribe to pending tx
-        # send {"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["newPendingTransactions"]}
-        async for msg in ws:
-            # parse tx or hash ...
-            PENDING_TX_TOTAL.labels(chain=CHAIN).inc()
-    finally:
-        WS_CONNECTIONS.dec()          # on disconnect
+# --- class -----------------------------------------------------------------
 
-
-class Backoff:
-    def __init__(self, base=0.05, factor=2.0, max_delay=5.0, jitter=0.2):
-        # Small base so tests that wait ~100ms can observe a reconnect
-        self.base = base
-        self.factor = factor
-        self.max_delay = max_delay
-        self.jitter = jitter
-        self.n = 0
-
-    def next(self) -> float:
-        raw = min(self.base * (self.factor ** self.n), self.max_delay)
-        self.n += 1
-        j = raw * self.jitter
-        return max(0.01, raw + random.uniform(-j, j))
-
-    def reset(self):
-        self.n = 0
-
+try:  # optional redis
+    import redis.asyncio as aioredis
+except Exception:  # pragma: no cover
+    aioredis = None
 
 class WSMempoolMonitor:
-    """
-    Multi-WS mempool racer:
-      - Maintains N websocket subscriptions to Polygon RPC providers
-      - Streams pending tx hashes into a shared queue
-      - Dedups across endpoints
-      - Tracks TPM/TPS on a rolling 60s window
-      - Graceful reconnect with exponential backoff + jitter
-      - Optional Redis XADD publishing
-    """
-    def __init__(
-        self,
-        endpoints,
-        metrics_port: Optional[int] = None,
-        min_rate_target_tpm: int = 100,
-    
-        dedup_window_size: int = 100_000,
-        redis_url: Optional[str] = None,
-        stream_key: str = "mempool:pending:txs",
-        # compatibility alias so existing code passing `redis_stream=` doesn't crash
-        redis_stream: Optional[str] = None,
-        **_ignore,  # ignore unknown kwargs for forward compatibility
+    def __init__(self, endpoints: Optional[List[str]] = None, metrics_port: Optional[int] = None, **kwargs):
+        # prefer env, but allow explicit list
+        self.endpoints: List[str] = _get_ws_endpoints_from_env() or (endpoints or [])
+        if not self.endpoints:
+            logger.warning("No WS endpoints set for chain=%s; mempool monitor not started.", os.getenv("CHAIN"))
+            self.enabled = False
+        else:
+            logger.info("WSMempoolMonitor starting with %d endpoints: %s", len(self.endpoints), self.endpoints)
+            self.enabled = True
 
-    ):
-        self._started = False
-        self.endpoints = endpoints
         self.metrics_port = metrics_port
-        self.min_rate_target_tpm = min_rate_target_tpm
-
         self._stop = asyncio.Event()
-        self._queue: "asyncio.Queue[Tuple[str,float]]" = asyncio.Queue(maxsize=10_000)
-        self._reader_tasks = []
-        self._agg_task: Optional[asyncio.Task] = None
 
+        # queues + dedup
+        self._queue: asyncio.Queue[Tuple[str, float]] = asyncio.Queue(maxsize=10_000)
         self._seen: Set[str] = set()
-        self._seen_order: deque[str] = deque(maxlen=dedup_window_size)
-        self._timestamps: deque[float] = deque()  # timestamps of unique txs (for rolling rate)
+        self._seen_order: Deque[str] = deque(maxlen=100_000)
+        self._timestamps: Deque[float] = deque()
+        self._tasks: List[asyncio.Task] = []
 
-        # Optional Redis publishing
-        self._redis = None           # client (async or sync)
-        self._redis_async = False    # whether client is async
-        self._stream = redis_stream or stream_key
-        if redis_url:
-            if aioredis is not None:
-                self._redis = aioredis.from_url(redis_url, decode_responses=True)
-                self._redis_async = True
-            elif redis is not None:
-                self._redis = redis.Redis.from_url(redis_url, decode_responses=True)
-                self._redis_async = False
+        # redis wiring (best-effort)
+        self.redis_stream: Optional[str] = kwargs.get("redis_stream") or os.getenv("REDIS_STREAM") or "mempool:pending:txs"
+        self.redis_url: str = kwargs.get("redis_url") or os.getenv("REDIS_URL") or "redis://redis:6379/0"
+        self.redis_maxlen: int = int(kwargs.get("redis_maxlen", os.getenv("REDIS_MAXLEN", "100000")))
+        self._redis = None
+        self.connected_endpoint: Optional[str] = None
 
-    async def start(self):
-        # Warm here too (harmless if already warmed in API)
-        PENDING_TX_TOTAL.labels(chain=CHAIN).inc(0)
-        for ep in self.endpoints:
-            self._reader_tasks.append(asyncio.create_task(self._reader(ep)))
+    async def start(self) -> "WSMempoolMonitor":
+        if not self.enabled:
+            return self
 
-    async def stop(self):
-        self._stop.set()
-        for t in self._reader_tasks:
-            t.cancel()
-        await asyncio.gather(*self._reader_tasks, return_exceptions=True)
-
-    async def _reader(self, endpoint: str):
-        backoff = 0.25
-        while not self._stop.is_set():
-            ws = None
+        if self.redis_stream and aioredis is not None:
             try:
-                conn = websockets.connect(endpoint, ping_interval=20, ping_timeout=20)
-                ws = await conn if inspect.isawaitable(conn) else conn
-                await ws.send(json.dumps(SUBSCRIBE_MSG))
-                WS_CONNECTIONS.inc()
-                while not self._stop.is_set():
-                    raw = await ws.recv()
-                    tx = self._extract_tx(raw)
-                    if not tx:
-                        continue
-                    # Count a seen pending tx
-                    PENDING_TX_TOTAL.labels(chain=CHAIN).inc()
-            except (ConnectionClosed, WebSocketException, OSError):
+                self._redis = aioredis.from_url(self.redis_url, encoding="utf-8", decode_responses=True)
+                logger.info("Redis stream enabled: %s @ %s", self.redis_stream, self.redis_url)
+            except Exception as e:
+                logger.warning("Redis init failed (%s); continuing without stream.", e)
+                self._redis = None
+
+        loop = asyncio.get_running_loop()
+        # start readers
+        for ep in self.endpoints:
+            self._tasks.append(loop.create_task(self._reader(ep)))
+        # start aggregator
+        self._tasks.append(loop.create_task(self._aggregator()))
+        await asyncio.sleep(0)  # yield
+        return self
+
+    async def stop(self) -> None:
+        self._stop.set()
+        for t in self._tasks:
+            t.cancel()
+        if self._tasks:
+            try:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+            except Exception:
+                pass
+        self._tasks.clear()
+        if self._redis:
+            try:
+                await self._redis.close()
+            except Exception:
+                pass
+
+    # --- internals ---------------------------------------------------------
+
+    async def _reader(self, endpoint: str) -> None:
+        """Connect, subscribe, then stream pending hashes with backoff."""
+        backoff = 0.05
+        while not self._stop.is_set():
+            try:
+                conn = websockets.connect(endpoint, ping_interval=30)
+                if hasattr(conn, "__aenter__"):
+                    async with conn as ws:
+                        await self._handle_ws(ws, endpoint)
+                elif inspect.isawaitable(conn):
+                    ws = await conn
+                    try:
+                        await self._handle_ws(ws, endpoint)
+                    finally:
+                        close = getattr(ws, "close", None)
+                        if close:
+                            await close()
+                else:
+                    ws = conn
+                    await self._handle_ws(ws, endpoint)
+            except Exception as e:
+                logger.warning("WS reader error on %s: %s; reconnect in %.1fs", endpoint, e, backoff)
+                if self.connected_endpoint == endpoint:
+                    self.connected_endpoint = None
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 5.0)
-            finally:
-                if ws:
-                    try: await ws.close()
-                    except: pass
-                WS_CONNECTIONS.dec()
+                backoff = min(backoff * 2, 1.0)
 
-    @staticmethod
-    def _extract_tx(raw):
-        if isinstance(raw, (bytes, bytearray)):
-            raw = raw.decode("utf-8", "ignore")
-        if not isinstance(raw, str):
-            return None
+    async def _handle_ws(self, ws, endpoint: str) -> None:
+        payload = _subscribe_payload_for(endpoint)
         try:
-            msg = json.loads(raw)
-            p = msg.get("params") or {}
-            tx = isinstance(p, dict) and p.get("result")
-            return tx if isinstance(tx, str) and tx.startswith("0x") else None
-        except json.JSONDecodeError:
-            s = raw.strip()
-            return s if s.startswith("0x") else None
+            await ws.send(payload)
+            ack = await asyncio.wait_for(ws.recv(), timeout=5)
+            self.connected_endpoint = endpoint
+            logger.info("WS subscribe ack on %s: %s", endpoint, str(ack)[:140])
+            for h in self._extract_hashes(ack):
+                try:
+                    self._queue.put_nowait((h, time.time()))
+                except asyncio.QueueFull:
+                    pass
+        except Exception as e:
+            logger.warning("No subscribe ack on %s (%s)", endpoint, e)
+            if not isinstance(e, asyncio.TimeoutError):
+                raise
 
-    async def _aggregator(self):
-        """
-        Dedup incoming hashes + maintain rolling 60s TPS/TPM.
-        Also optionally publish to Redis stream.
-        """
+        # read loop
+        while not self._stop.is_set():
+            raw = await ws.recv()
+            ts = time.time()
+            for h in self._extract_hashes(raw):
+                try:
+                    self._queue.put_nowait((h, ts))
+                except asyncio.QueueFull:
+                    pass
+
+    async def _aggregator(self) -> None:
+        """Deduplicate, bump metrics, and publish to Redis stream (if enabled)."""
         while not self._stop.is_set():
             try:
                 tx_hash, ts_recv = await asyncio.wait_for(self._queue.get(), timeout=0.25)
             except asyncio.TimeoutError:
-                self._update_rates()
                 continue
 
             if tx_hash in self._seen:
@@ -196,72 +201,64 @@ class WSMempoolMonitor:
                     self._seen.discard(old)
 
             self._timestamps.append(ts_recv)
-            mempool_unique_tx_total.inc()
+            try:
+                if _CHAIN_METRIC_LABELS and hasattr(mempool_unique_tx_total, "labels"):
+                    mempool_unique_tx_total.labels(**_CHAIN_METRIC_LABELS).inc()
+                else:
+                    mempool_unique_tx_total.inc()
+            except Exception:
+                pass
 
-            # Optional Redis publish
-            if self._redis and self._stream:
+            if self._redis and self.redis_stream:
                 try:
-                    if self._redis_async:
-                        await self._redis.xadd(self._stream, {"tx": tx_hash, "ts": str(ts_recv)})
-                    else:
-                        # avoid blocking the event loop with sync client
-                        await asyncio.to_thread(self._redis.xadd, self._stream, {"tx": tx_hash, "ts": str(ts_recv)})
-                    mempool_stream_publish_total.labels(stream=self._stream).inc()
+                    try:
+                        await self._redis.xadd(
+                            name=self.redis_stream,
+                            fields={"tx": tx_hash, "hash": tx_hash, "ts_ms": str(int(ts_recv * 1000)), "ts": str(int(ts_recv))},
+                            maxlen=self.redis_maxlen,
+                            approximate=True,
+                        )
+                    except TypeError:
+                        await self._redis.xadd(
+                            self.redis_stream,
+                            {"tx": tx_hash, "hash": tx_hash, "ts_ms": str(int(ts_recv * 1000)), "ts": str(int(ts_recv))}
+                        )
                 except Exception:
-                    mempool_stream_publish_errors_total.labels(stream=self._stream).inc()
+                    # do not crash the aggregator
+                    pass
 
-            self._update_rates()
+    def _extract_hashes(self, raw: Any) -> Iterable[str]:
+        # tuple/list form from tests: ("msg", "0x...")
+        if isinstance(raw, (tuple, list)) and len(raw) >= 2 and isinstance(raw[1], str):
+            return [raw[1]] if raw[1].startswith("0x") else []
 
-    def _update_rates(self):
-        now = time.time()
-        while self._timestamps and now - self._timestamps[0] > 60.0:
-            self._timestamps.popleft()
+        # bytes -> str
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                raw = raw.decode()
+            except Exception:
+                return []
 
-        count_60s = len(self._timestamps)
-        tps = count_60s / 60.0
-        mempool_tps.set(tps)
-        mempool_tpm.set(count_60s)
+        # string or JSON-RPC string
+        if isinstance(raw, str):
+            s = raw.strip()
+            if s.startswith("0x"):
+                return [s]
+            try:
+                raw = json.loads(s)
+            except Exception:
+                return []
 
-async def _runner(self, endpoint: str):
-    WS_CONNECTIONS.inc()
-    try:
-        # connect + subscribe...
-        async for msg in ws:
-            # whenever you observe a pending tx/hash:
-            PENDING_TX_TOTAL.labels(chain=CHAIN).inc()
-    finally:
-        WS_CONNECTIONS.dec()
+        # JSON-RPC dict
+        if isinstance(raw, dict):
+            params = raw.get("params") or {}
+            res = params.get("result")
+            if isinstance(res, str) and res.startswith("0x"):
+                return [res]
+            if isinstance(res, dict):
+                for k in ("hash", "transactionHash"):
+                    v = res.get(k)
+                    if isinstance(v, str) and v.startswith("0x"):
+                        return [v]
 
-async def run_standalone():
-    """
-    Minimal runner for dev: reads Polygon WS endpoints from env and starts metrics on :8000
-    """
-    endpoints = [
-        os.getenv("WS_POLYGON_1", "").strip(),
-        os.getenv("WS_POLYGON_2", "").strip(),
-        os.getenv("WS_POLYGON_3", "").strip(),
-    ]
-    endpoints = [e for e in endpoints if e]
-    if not endpoints:
-        raise SystemExit("No WS endpoints provided. Set WS_POLYGON_1/2/3.")
-
-    redis_url = os.getenv("REDIS_URL", "").strip() or None
-    stream_key = os.getenv("TX_STREAM_KEY", "mempool:pending:txs")
-
-    monitor = WSMempoolMonitor(
-        endpoints=endpoints,
-        metrics_port=int(os.getenv("METRICS_PORT", "8000")),
-        redis_url=redis_url,
-        stream_key=stream_key,
-    )
-    await monitor.start()
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        pass
-    finally:
-        await monitor.stop()
-
-if __name__ == "__main__":
-    asyncio.run(run_standalone())
+        return []

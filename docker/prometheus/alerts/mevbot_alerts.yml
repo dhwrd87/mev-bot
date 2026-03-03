@@ -1,0 +1,102 @@
+groups:
+  - name: mevbot-runtime-safety
+    interval: 30s
+    rules:
+      - alert: HighRpcLatency
+        expr: |
+          (
+            histogram_quantile(
+              0.99,
+              sum by (le) (rate(mevbot_rpc_latency_seconds_bucket[5m]))
+            ) > 1.5
+          )
+          or
+          (
+            histogram_quantile(
+              0.99,
+              sum by (le) (rate(rpc_latency_seconds_bucket[5m]))
+            ) > 1.5
+          )
+        for: 10m
+        labels:
+          severity: warning
+          service: mev-bot
+        annotations:
+          summary: "RPC p99 latency is high"
+          description: "RPC p99 latency has been above 1.5s for 10m. Check provider health, rate limits, and failover routing."
+          runbook: "Check Grafana Operator Overview (RPC p95/p99), then inspect provider-specific errors and failover order."
+
+      - alert: HighTxFailureRate
+        expr: |
+          (
+            sum(increase(mevbot_tx_failed_total[10m]))
+            /
+            clamp_min(
+              sum(increase(mevbot_tx_sent_total[10m])) + sum(increase(mevbot_tx_failed_total[10m])),
+              1
+            )
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          service: mev-bot
+        annotations:
+          summary: "Transaction failure ratio is elevated"
+          description: "Failed/(sent+failed) over 10m is above 25%. Check revert reasons, nonce handling, and RPC/provider errors."
+          runbook: "Open Execution Deep Dive dashboard, inspect revert reason panel and nonce/replacement events."
+
+      - alert: ConfirmLatencySpike
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(mevbot_tx_confirm_latency_seconds_bucket[10m]))
+          ) > 45
+        for: 10m
+        labels:
+          severity: warning
+          service: mev-bot
+        annotations:
+          summary: "Transaction confirm latency spike"
+          description: "p95 confirmation latency has exceeded 45s for 10m. Inclusion conditions may be degraded."
+          runbook: "Check network conditions, gas policy, and private relay health. Validate replacement/fee bump logic."
+
+      - alert: DrawdownExceeded
+        expr: |
+          max_over_time(mevbot_drawdown_usd[10m]) > 500
+          or
+          min_over_time(mevbot_risk_state{key="daily_pnl_usd"}[10m]) < -500
+        for: 5m
+        labels:
+          severity: critical
+          service: risk
+        annotations:
+          summary: "Drawdown limit exceeded"
+          description: "Drawdown/PnL breach persisted for 5m. Bot should be paused or panic mode engaged."
+          runbook: "Set operator !pause and !kill on, verify current positions/exposure, then inspect recent trade failures."
+
+      - alert: BotPanicState
+        expr: max(mevbot_state) >= 5
+        for: 2m
+        labels:
+          severity: critical
+          service: mev-bot
+        annotations:
+          summary: "Bot is in PANIC state"
+          description: "Canonical state metric mevbot_state indicates PANIC for >2m."
+          runbook: "Check operator kill-switch, risk invariants, and recent critical errors before resuming."
+
+      - alert: BotStuckNoHeadAdvance
+        expr: |
+          up{job="mev-bot"} == 1
+          and
+          sum(mevbot_head_lag_blocks) > 3
+          and
+          sum(changes(mevbot_head_lag_blocks[10m])) == 0
+        for: 10m
+        labels:
+          severity: critical
+          service: mev-bot
+        annotations:
+          summary: "Bot appears stuck with no head advance"
+          description: "Head lag has stayed flat and elevated for 10m while bot is up. Chain sync/provider path may be stuck."
+          runbook: "Check RPC reachability and chain head movement, then restart worker(s) after validating endpoint health."

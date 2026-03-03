@@ -3,7 +3,7 @@ import os, sys
 from web3 import Web3
 from bot.exec.exact_output import ExactOutputSwapper, ExactOutputParams
 
-RPC     = os.getenv("RPC_ENDPOINT_PRIMARY", "https://rpc.sepolia.org")
+RPC     = (os.getenv("RPC_HTTP") or os.getenv("RPC_ENDPOINT_PRIMARY") or "https://rpc.sepolia.org")
 ROUTER  = os.getenv("UNISWAP_V3_ROUTER", "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 
 TOKEN_IN   = os.getenv("SMOKE_TOKEN_IN")

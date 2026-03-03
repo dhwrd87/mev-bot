@@ -1,0 +1,179 @@
+{
+  "dashboard": {
+    "id": 1233092322078720,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "mevbot_win_rate{mode=\"stealth\",window=\"24h\"}"
+          }
+        ],
+        "title": "Win Rate (Stealth, 24h)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(mevbot_profit_usd_total)"
+          }
+        ],
+        "title": "Total Profit USD",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(mevbot_trades_total[24h]))"
+          }
+        ],
+        "title": "Trades Today",
+        "type": "stat"
+      },
+      {
+        "fieldConfig": {
+          "defaults": {
+            "max": 1,
+            "min": 0
+          }
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "mevbot_kill_switch"
+          }
+        ],
+        "title": "Kill Switch",
+        "type": "gauge"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.90, sum by (le, mode)(rate(mevbot_execute_latency_ms_bucket[5m])))"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum by (le, mode)(rate(mevbot_execute_latency_ms_bucket[5m])))"
+          }
+        ],
+        "title": "Execution Latency (ms) by Mode",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "avg by (relay, chain) (mevbot_relay_success_ratio)"
+          }
+        ],
+        "title": "Relay Success Ratio by Chain",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "sum by (chain) (rate(mevbot_gas_spent_usd_total[5m]))"
+          }
+        ],
+        "title": "Gas Spend USD (rate)",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.90, sum by (le, provider, chain)(rate(mevbot_rpc_latency_ms_bucket[5m])))"
+          }
+        ],
+        "title": "RPC Latency p90 (ms)",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "5s",
+    "schemaVersion": 38,
+    "timezone": "browser",
+    "title": "MEV Bot \u2013 Starter",
+    "uid": "mev-bot-starter",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "mev-bot-dashboard.json",
+    "slug": "mev-bot-e28093-starter",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/mev-bot-starter/mev-bot-e28093-starter",
+    "version": 1
+  }
+}

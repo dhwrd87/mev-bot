@@ -2,31 +2,19 @@
 from __future__ import annotations
 import json, time, asyncio, random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Protocol
 
 import httpx
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from bot.exec.exact_output import ExactOutputParams, ExactOutputSwapper, SWAPROUTER_ABI
-from bot.exec.orderflow import Endpoint  # reuse your endpoint schema
+from bot.sim.provider import SimProvider, SwapSimResult, BundleSimResult
 from bot.core.telemetry import (
     # add these to telemetry.py (see bottom snippet)
     sim_single_total, sim_single_success_total, sim_single_fail_total,
     sim_bundle_total, sim_bundle_success_total, sim_bundle_fail_total,
 )
-
-@dataclass
-class SwapSimResult:
-    ok: bool
-    amount_in: Optional[int]
-    reason: Optional[str] = None  # revert or policy reason
-
-@dataclass
-class BundleSimResult:
-    ok: bool
-    endpoint: Optional[str]
-    details: Dict[str, Any]  # raw-ish result payload for logging/forensics
 
 class Backoff:
     def __init__(self, base=0.25, factor=2.0, max_delay=2.0, jitter=0.2):
@@ -39,16 +27,24 @@ class Backoff:
         return max(0.05, raw + random.uniform(-j, j))
     def reset(self): self.n = 0
 
-class PreSubmitSimulator:
+class BuilderEndpoint(Protocol):
+    name: str
+    url: str
+    kind: str
+    method_send_bundle: str
+    headers: Optional[Dict[str, str]]
+
+
+class PreSubmitSimulator(SimProvider):
     """
     - simulate_swap: local eth_call against router (uses current chain state)
     - simulate_bundle: remote builder 'eth_callBundle' to simulate same-block permit+swap
     """
-    def __init__(self, w3: Web3, builder_endpoints: List[Endpoint]):
+    def __init__(self, w3: Web3, builder_endpoints: List[BuilderEndpoint]):
         self.w3 = w3
         # only endpoints that declare a bundle-call method
         self.builders = [e for e in builder_endpoints if getattr(e, "method_send_bundle", None)]
-        self._http = httpx.AsyncClient(http2=True, timeout=httpx.Timeout(6.0, read=6.0))
+        self._http = httpx.AsyncClient(http2=False, timeout=httpx.Timeout(6.0, read=6.0))
 
     async def aclose(self):
         await self._http.aclose()
@@ -60,18 +56,19 @@ class PreSubmitSimulator:
         """
         sim_single_total.inc()
         try:
-            swapper = ExactOutputSwapper(self.w3, params.router)
+            router_addr = params.router or getattr(params, "router", None)
+            swapper = ExactOutputSwapper(self.w3, router_addr)
             # Decode by calling the function locally (eth_call)
-            contract = self.w3.eth.contract(address=self.w3.to_checksum_address(params.router), abi=SWAPROUTER_ABI)
+            contract = self.w3.eth.contract(address=self.w3.to_checksum_address(router_addr), abi=SWAPROUTER_ABI)
             fn = contract.functions.exactOutputSingle({
                 "tokenIn":   self.w3.to_checksum_address(params.token_in),
                 "tokenOut":  self.w3.to_checksum_address(params.token_out),
                 "fee":       int(params.fee),
                 "recipient": self.w3.to_checksum_address(params.recipient),
-                "deadline":  int(params.deadline),
-                "amountOut": int(params.amount_out_exact),
-                "amountInMaximum": int(params.amount_in_max),
-                "sqrtPriceLimitX96": int(params.sqrt_price_limit_x96),
+                "deadline":  int(params.deadline or params.deadline_s or 0),
+                "amountOut": int(params.amount_out_exact or params.amount_out),
+                "amountInMaximum": int(params.amount_in_max or params.max_amount_in),
+                "sqrtPriceLimitX96": int(params.sqrt_price_limit_x96 or 0),
             })
             amount_in = fn.call({"from": self.w3.to_checksum_address(sender)})
             # Policy check
@@ -165,9 +162,15 @@ class PreSubmitSimulator:
         if resp.status_code >= 500:
             return False, {"code":resp.status_code,"message":f"http {resp.status_code}"}
         try:
-            data = resp.json()
+            try:
+                data = resp.json()
+            except TypeError:
+                data = resp.json.__func__()  # type: ignore[attr-defined]
         except Exception:
-            return False, {"code":-1,"message":f"non-json: {resp.text[:120]}"}
+            text = getattr(resp, "text", "")
+            if not text:
+                text = repr(resp)
+            return False, {"code":-1,"message":f"non-json: {text[:120]}"}
         if "error" in data:
             return False, data["error"]
         return True, data.get("result", data)
@@ -198,5 +201,3 @@ class PreSubmitSimulator:
         code = err.get("code")
         msg = (err.get("message") or "").lower()
         return code in (429, -32005, -32000) or "timeout" in msg or "temporar" in msg or "rate" in msg or "busy" in msg
-
-

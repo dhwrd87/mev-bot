@@ -1,0 +1,49 @@
+{
+  "title": "Private Orderflow Health",
+  "uid": "private-orderflow",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Builder Success Ratio (10m)",
+      "gridPos": {"x":0,"y":0,"w":8,"h":4},
+      "targets": [
+        {"expr": "builder:success_ratio:10m", "legendFormat": "{{builder}} ({{chain}})"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Bundle Inclusions / Attempts",
+      "gridPos": {"x":8,"y":0,"w":16,"h":8},
+      "targets": [
+        {"expr": "sum by (builder,chain) (rate(mevbot_bundle_inclusions_total[5m]))", "legendFormat": "inclusions {{builder}} ({{chain}})"},
+        {"expr": "sum by (builder,chain) (rate(mevbot_bundle_attempts_total[5m]))", "legendFormat": "attempts {{builder}} ({{chain}})"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Inclusion Latency p95 (ms)",
+      "gridPos": {"x":0,"y":4,"w":12,"h":8},
+      "targets": [
+        {"expr": "builder:bundle_inclusion_latency_ms:p95", "legendFormat": "{{builder}} ({{chain}})"}
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Rejections by Reason (10m rate)",
+      "gridPos": {"x":12,"y":8,"w":12,"h":8},
+      "targets": [
+        {"expr": "sum by (builder,chain,reason) (rate(mevbot_bundle_rejections_total[10m]))", "legendFormat": "{{reason}} {{builder}} ({{chain}})"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Relay Success Ratio (10m)",
+      "gridPos": {"x":0,"y":12,"w":8,"h":4},
+      "targets": [
+        {"expr": "(increase(mevbot_relay_success_total[10m])) / clamp_max(increase(mevbot_relay_attempts_total[10m]), 1e9)", "legendFormat": "{{relay}} ({{chain}})"}
+      ]
+    }
+  ]
+}

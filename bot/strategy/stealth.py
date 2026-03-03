@@ -1,56 +1,113 @@
-# inside your StealthStrategy.execute_stealth_swap(...)
-from web3 import Web3
-from bot.exec.exact_output import ExactOutputSwapper, ExactOutputParams
-from bot.permit2.handler import Permit2Handler
+from __future__ import annotations
 
-async def execute_stealth_swap(self, params: dict):
-    """
-    Expected keys in params:
-      token_in, token_out, amount_out_exact, max_amount_in, pool_fee, recipient,
-      w3 (Web3), router (optional), from_addr (EOA or smart wallet),
-      quote_amount_in (optional), max_slippage_bps (optional)
-    """
-    w3: Web3 = params["w3"]
-    router = params.get("router") or os.getenv("UNISWAP_V3_ROUTER")
-    swapper = ExactOutputSwapper(w3, router=router)
+from typing import Dict, Any
 
-    # 1) Off-chain Permit2 signature (we assume your on-chain multicall will include Permit2.permit)
-    p2 = Permit2Handler()
-    permit = await p2.generate_signature(
-        token=params["token_in"],
-        amount=params["max_amount_in"],     # allow router to pull up to max
-        spender=router,
-        expiration_s=3600,
-        min_deadline_s=300,
-    )
+from bot.strategy.base import BaseStrategy, TransactionResult
+from bot.exec.orderflow import PrivateOrderflowRouter, TxTraits
+from bot.exec.exact_output import ExactOutputParams
+from bot.sim.provider import SimProvider
+from bot.strategy.stealth_triggers import TradeContext, evaluate_stealth
 
-    # 2) Build exactOutputSingle calldata
-    eo = ExactOutputParams(
-        token_in=params["token_in"],
-        token_out=params["token_out"],
-        fee=int(params["pool_fee"]),
-        recipient=params["recipient"],
-        amount_out=int(params["amount_out_exact"]),
-        max_amount_in=int(params["max_amount_in"]),
-        from_addr=params.get("from_addr"),
-        quote_amount_in=params.get("quote_amount_in"),
-        max_slippage_bps=params.get("max_slippage_bps"),
-    )
-    to, data, value = swapper.build_calldata(eo)
 
-    # 3) Simulate (eth_call) before private submit
-    ok, err = swapper.simulate(eo)
-    if not ok:
-        # record metric + raise to caller
-        from bot.telemetry.metrics import DETECT_LATENCY_MS  # or a dedicated counter for reverts
-        # you can have: exact_output_revert_total.inc()
-        raise RuntimeError(f"exactOutputSingle simulation failed: {err}")
+class StealthStrategy(BaseStrategy):
+    def __init__(self, sim_provider: SimProvider | None = None):
+        self.router = PrivateOrderflowRouter.from_env()
+        self.sim_provider = sim_provider
 
-    # 4) Submit privately.
-    # If you have a multicall/universal router that can combine Permit2.permit + swap, use it.
-    # Otherwise do two txs (permit then swap) – less ideal but OK for MVP on private orderflow.
-    return await self.private_orderflow.submit_with_permit2_and_swap(
-        permit=permit,                        # includes details + signature
-        swap={"to": to, "data": data, "value": value},
-        max_priority_fee=params.get("max_priority_fee"),
-    )
+    async def execute_stealth_swap(self, params: Dict[str, Any]) -> TransactionResult:
+        if self.sim_provider and params.get("simulate"):
+            sim_sender = params.get("sim_sender") or params.get("sender")
+            sim_params = params.get("sim_params")
+            if isinstance(sim_params, dict):
+                sim_params = ExactOutputParams(**sim_params)
+            if isinstance(sim_params, ExactOutputParams) and sim_sender:
+                sim_res = await self.sim_provider.simulate_swap(sim_params, sender=sim_sender)
+                if not sim_res.ok:
+                    return TransactionResult(
+                        success=False,
+                        tx_hash="",
+                        mode="stealth",
+                        slippage=float(params.get("estimated_slippage", 0.0)),
+                        sandwiched=False,
+                        notes={"sim_reason": sim_res.reason, "sim_amount_in": sim_res.amount_in},
+                    )
+
+        # Accept either a pre-signed tx or a placeholder (dry-run / tests)
+        signed_raw_tx = params.get("signed_raw_tx") or "0xDRYRUN"
+
+        traits = TxTraits(
+            chain=params.get("chain", "polygon"),
+            value_wei=int(params.get("value_wei", 0)),
+            size_usd=float(params.get("size_usd", 0.0)),
+            token_is_new=bool(params.get("token_new", False) or params.get("token_is_new", False)),
+            uses_permit2=bool(params.get("uses_permit2", False)),
+            exact_output=bool(params.get("exact_output", True)),
+            desired_privacy=str(params.get("desired_privacy", "private")),
+            detected_snipers=int(params.get("detected_snipers", 0)),
+        )
+
+        res = await self.router.route_and_submit(signed_raw_tx, traits, metadata={})
+
+        gas_used = getattr(res, "gas_used", 0) or 0
+        gas_price_gwei = getattr(res, "gas_price_gwei", 0.0) or 0.0
+        eth_usd = float(params.get("eth_usd", 2500.0))
+        size_usd = float(params.get("size_usd", 0.0))
+
+        gas_cost_usd = (gas_used * gas_price_gwei * 1e-9) * eth_usd if gas_used and gas_price_gwei else 0.0
+        gas_ratio = (gas_cost_usd / size_usd) if size_usd > 0 else 0.0
+
+        notes = {
+            "relay": res.relay,
+            "error": res.error,
+            "gas_used": gas_used,
+            "gas_price_gwei": gas_price_gwei,
+            "gas_cost_usd": gas_cost_usd,
+            "gas_cost_ratio": gas_ratio,
+        }
+
+        return TransactionResult(
+            success=bool(res.ok),
+            tx_hash=res.tx_hash or "",
+            mode="stealth",
+            slippage=float(params.get("estimated_slippage", 0.0)),
+            sandwiched=False,
+            notes=notes,
+        )
+
+    async def should_go_stealth(self, trade: Dict[str, Any]) -> bool:
+        ctx = TradeContext(
+            estimated_slippage=float(trade.get("estimated_slippage", 0.0)),
+            token_age_hours=float(trade.get("token_age_hours", 1e9)),
+            liquidity_usd=float(trade.get("liquidity_usd", 0.0)),
+            is_trending=bool(trade.get("is_trending", False)),
+            detected_snipers=int(trade.get("detected_snipers", 0)),
+            size_usd=float(trade.get("size_usd", 0.0)),
+            gas_gwei=float(trade.get("gas_gwei", 0.0)),
+        )
+        go, reasons = evaluate_stealth(ctx)
+        trade.setdefault("_stealth_reasons", reasons)
+        return go
+
+    async def evaluate(self, context: Dict[str, Any]) -> float:
+        ctx = TradeContext(
+            estimated_slippage=float(context.get("estimated_slippage", context.get("slippage", 0.0))),
+            token_age_hours=float(context.get("token_age_hours", 1e9)),
+            liquidity_usd=float(context.get("liquidity_usd", context.get("pool_liquidity_usd", 0.0))),
+            is_trending=bool(context.get("is_trending", False)),
+            detected_snipers=int(context.get("detected_snipers", 0)),
+            size_usd=float(context.get("size_usd", context.get("notional_usd", 0.0))),
+            gas_gwei=float(context.get("gas_gwei", context.get("gas_price_gwei", 0.0))),
+        )
+        go, reasons = evaluate_stealth(ctx)
+        score = 1.0 if go else min(1.0, len(reasons) / 7.0)
+        return float(score)
+
+    async def execute(self, opportunity: Dict[str, Any]) -> TransactionResult:
+        params = {
+            "chain": opportunity.get("chain", "polygon"),
+            "size_usd": float(opportunity.get("size_usd", opportunity.get("notional_usd", 8000.0))),
+            "eth_usd": float(opportunity.get("eth_usd", 2500.0)),
+            "detected_snipers": int(opportunity.get("detected_snipers", 0)),
+            "estimated_slippage": float(opportunity.get("estimated_slippage", 0.0)),
+        }
+        return await self.execute_stealth_swap(params)

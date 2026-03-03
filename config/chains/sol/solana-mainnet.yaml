@@ -1,0 +1,46 @@
+{
+  "family": "sol",
+  "chain": "solana",
+  "network": "mainnet",
+  "chain_id": 0,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "solana",
+        "http": "https://api.mainnet-beta.solana.com",
+        "ws": "wss://api.mainnet-beta.solana.com"
+      },
+      {
+        "alias": "helius",
+        "http": "https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}",
+        "ws": "wss://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://explorer.solana.com",
+    "tx_url": "https://explorer.solana.com/tx/{tx_hash}",
+    "address_url": "https://explorer.solana.com/address/{address}",
+    "block_url": "https://explorer.solana.com/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "SOL",
+    "decimals": 9
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "jupiter_default"
+  ],
+  "dex_configs": {
+    "jupiter_default": {
+      "type": "sol_jupiter",
+      "base_url": "https://quote-api.jup.ag/v6",
+      "timeout_ms": 1200
+    }
+  }
+}

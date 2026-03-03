@@ -73,7 +73,7 @@
       },
       "targets": [
         {
-          "expr": "max by (endpoint) (mevbot_mempool_ws_connected{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)",
+          "expr": "max by (endpoint) (mevbot_mempool_ws_connected{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -111,17 +111,17 @@
       ],
       "targets": [
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
           "legendFormat": "rx {{endpoint}}",
           "refId": "A"
         },
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
           "legendFormat": "err {{endpoint}}",
           "refId": "B"
         },
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
           "legendFormat": "reconnects {{endpoint}}",
           "refId": "C"
         }
@@ -139,7 +139,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\", chain=~\"$chain\", network=~\"$network\"})"
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\", chain=~\"$chain\", network=~\"$network\"}) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -189,6 +189,24 @@
         }
       },
       {
+        "name": "endpoint",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_mempool_ws_connected{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}, endpoint)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
         "name": "network",
         "type": "query",
         "datasource": "Prometheus",
@@ -200,56 +218,6 @@
           "selected": true,
           "text": "All",
           "value": "$__all"
-        }
-      },
-      {
-        "name": "dex",
-        "type": "query",
-        "datasource": "Prometheus",
-        "query": "label_values(mevbot_heartbeat_ts, dex)",
-        "includeAll": true,
-        "customAllValue": ".*",
-        "multi": true,
-        "current": {
-          "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
-        }
-      },
-      {
-        "name": "strategy",
-        "type": "query",
-        "datasource": "Prometheus",
-        "query": "label_values(mevbot_heartbeat_ts, strategy)",
-        "includeAll": true,
-        "customAllValue": ".*",
-        "multi": false,
-        "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
-        }
-      },
-      {
-        "name": "provider",
-        "type": "query",
-        "datasource": "Prometheus",
-        "query": "label_values(mevbot_heartbeat_ts, provider)",
-        "includeAll": true,
-        "customAllValue": ".*",
-        "multi": true,
-        "current": {
-          "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
         }
       }
     ]

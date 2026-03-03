@@ -1,44 +1,90 @@
-polygon:
-  private_orderflow:
-    endpoints:
-      - name: "provider-a-private"
-        url: "https://polygon-private.example.com"
-        kind: "rpc"
-        method_send_raw: "eth_sendRawTransaction"
-      - name: "builder-x"
-        url: "https://builder-x.example.com"
-        kind: "builder"
-        method_send_bundle: "eth_sendBundle"
-  uniswap_v2:
-    factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984"  # QuickSwap V2 Factory
-    router:  "0x1095692a6237d83c6a72f3f5efedb9a670c49223"         # fill in
-  uniswap_v3:
-    router:  "0x4C60051384bd2d3C01bfc845Cf5F4b44bcbE9de5"       # fill in
-    quoter_v2: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e	"       # fill in
-
-base:
-  private_orderflow:
-    endpoints:
-      - name: "provider-b-private"
-        url: "https://base-private.example.com"
-        kind: "rpc"
-ethereum:
-  private_orderflow:
-    endpoints:
-      - name: "mev-blocker"
-        url: "https://rpc.mevblocker.io"
-        kind: "rpc"
-      - name: "flashbots"
-        url: "https://rpc.flashbots.net"
-        kind: "rpc"
-      - name: "builder-pool"
-        url: "https://builderpool.example.com"
-        kind: "builder"
-        method_send_bundle: "eth_sendBundle"
-
-      - name: "flashbots-auth"
-        url: "https://relay.flashbots.net"
-        kind: "builder"
-        method_send_bundle: "eth_sendBundle"
-        headers:
-          X-Auth-Key: "${FLASHBOTS_AUTH_KEY}"
+{
+  "chains": {
+    "sepolia": {
+      "chain_id": 11155111,
+      "default_rpc_http": "https://ethereum-sepolia-rpc.publicnode.com",
+      "default_rpc_http_backups": [
+        "https://sepolia.gateway.tenderly.co",
+        "https://sepolia.infura.io/v3/${INFURA_KEY}"
+      ],
+      "default_ws_endpoints": [
+        "wss://ethereum-sepolia-rpc.publicnode.com",
+        "wss://sepolia.gateway.tenderly.co",
+        "wss://sepolia.infura.io/ws/v3/${INFURA_KEY}"
+      ],
+      "explorer_base_url": "https://sepolia.etherscan.io",
+      "native_symbol": "ETH"
+    },
+    "amoy": {
+      "chain_id": 80002,
+      "default_rpc_http": "https://polygon-amoy-bor-rpc.publicnode.com",
+      "default_rpc_http_backups": [
+        "https://rpc-amoy.polygon.technology"
+      ],
+      "default_ws_endpoints": [
+        "wss://polygon-amoy-bor-rpc.publicnode.com"
+      ],
+      "explorer_base_url": "https://amoy.polygonscan.com",
+      "native_symbol": "POL"
+    },
+    "mainnet": {
+      "chain_id": 1,
+      "default_rpc_http": "https://ethereum-rpc.publicnode.com",
+      "default_rpc_http_backups": [
+        "https://mainnet.gateway.tenderly.co",
+        "https://mainnet.infura.io/v3/${INFURA_KEY}"
+      ],
+      "default_ws_endpoints": [
+        "wss://ethereum-rpc.publicnode.com",
+        "wss://mainnet.gateway.tenderly.co",
+        "wss://mainnet.infura.io/ws/v3/${INFURA_KEY}"
+      ],
+      "explorer_base_url": "https://etherscan.io",
+      "native_symbol": "ETH"
+    },
+    "base": {
+      "chain_id": 8453,
+      "default_rpc_http": "https://base-rpc.publicnode.com",
+      "default_rpc_http_backups": [
+        "https://mainnet.base.org"
+      ],
+      "default_ws_endpoints": [
+        "wss://base-rpc.publicnode.com"
+      ],
+      "explorer_base_url": "https://basescan.org",
+      "native_symbol": "ETH"
+    },
+    "berachain": {
+      "chain_id": 80094,
+      "default_rpc_http": "https://rpc.berachain.com",
+      "default_rpc_http_backups": [],
+      "default_ws_endpoints": [
+        "wss://rpc.berachain.com"
+      ],
+      "explorer_base_url": "https://berascan.com",
+      "native_symbol": "BERA"
+    },
+    "polygon": {
+      "chain_id": 137,
+      "default_rpc_http": "https://polygon-bor-rpc.publicnode.com",
+      "default_rpc_http_backups": [
+        "https://polygon-rpc.com"
+      ],
+      "default_ws_endpoints": [
+        "wss://polygon-bor-rpc.publicnode.com"
+      ],
+      "explorer_base_url": "https://polygonscan.com",
+      "native_symbol": "POL"
+    },
+    "solana": {
+      "chain_id": 0,
+      "default_rpc_http": "https://api.mainnet-beta.solana.com",
+      "default_rpc_http_backups": [],
+      "default_ws_endpoints": [
+        "wss://api.mainnet-beta.solana.com"
+      ],
+      "explorer_base_url": "https://explorer.solana.com",
+      "native_symbol": "SOL"
+    }
+  }
+}

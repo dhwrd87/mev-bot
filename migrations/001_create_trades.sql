@@ -1,0 +1,1 @@
+../sql/migrations/001_create_trades.sql

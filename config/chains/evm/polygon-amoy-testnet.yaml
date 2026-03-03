@@ -1,0 +1,64 @@
+{
+  "family": "evm",
+  "chain": "amoy",
+  "network": "testnet",
+  "chain_id": 80002,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://polygon-amoy-bor-rpc.publicnode.com",
+        "ws": "wss://polygon-amoy-bor-rpc.publicnode.com"
+      },
+      {
+        "alias": "polygon",
+        "http": "https://rpc-amoy.polygon.technology",
+        "ws": "wss://rpc-amoy.polygon.technology"
+      },
+      {
+        "alias": "infura",
+        "http": "https://polygon-amoy.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://polygon-amoy.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://amoy.polygonscan.com",
+    "tx_url": "https://amoy.polygonscan.com/tx/{tx_hash}",
+    "address_url": "https://amoy.polygonscan.com/address/{address}",
+    "block_url": "https://amoy.polygonscan.com/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "POL",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${AMOY_UNIV2_ROUTER}",
+      "factory": "${AMOY_UNIV2_FACTORY}",
+      "fee_bps": 30
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${AMOY_UNIV3_FACTORY}",
+      "quoter": "${AMOY_UNIV3_QUOTER}",
+      "swap_router": "${AMOY_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        500,
+        3000,
+        10000
+      ]
+    }
+  }
+}

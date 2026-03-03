@@ -41,23 +41,35 @@ class V2PoolFetcher:
     """
     def __init__(self, w3: Web3, factory_address: str, ttl_seconds: int = 5):
         self.w3 = w3
-        self.factory = self.w3.eth.contract(address=self.w3.to_checksum_address(factory_address), abi=V2_FACTORY_ABI)
+        self._factory_address = self._safe_checksum(factory_address)
+        self.factory = None
         self.ttl = ttl_seconds
         self._pair_cache: Dict[Tuple[str, str], str] = {}
         self._pool_cache: Dict[str, Tuple[float, V2PoolInfo]] = {}
 
+    def _factory(self):
+        if self.factory is None:
+            self.factory = self.w3.eth.contract(address=self._factory_address, abi=V2_FACTORY_ABI)
+        return self.factory
+
     def _sorted_pair(self, a: str, b: str) -> Tuple[str, str]:
-        ca, cb = self.w3.to_checksum_address(a), self.w3.to_checksum_address(b)
+        ca, cb = self._safe_checksum(a), self._safe_checksum(b)
         return (ca, cb) if ca.lower() < cb.lower() else (cb, ca)
+
+    @staticmethod
+    def _safe_checksum(addr: str) -> str:
+        if isinstance(addr, str) and addr.startswith("0x") and len(addr) < 42:
+            addr = "0x" + addr[2:].rjust(40, "0")
+        return Web3.to_checksum_address(addr)
 
     def get_pair(self, token_a: str, token_b: str) -> Optional[str]:
         key = self._sorted_pair(token_a, token_b)
         if key in self._pair_cache:
             return self._pair_cache[key]
-        addr = self.factory.functions.getPair(key[0], key[1]).call()
+        addr = self._factory().functions.getPair(key[0], key[1]).call()
         if int(addr, 16) == 0:
             return None
-        self._pair_cache[key] = self.w3.to_checksum_address(addr)
+        self._pair_cache[key] = self._safe_checksum(addr)
         return self._pair_cache[key]
 
     def get_pool_info(self, token_in: str, token_out: str) -> Optional[V2PoolInfo]:
@@ -81,9 +93,9 @@ class V2PoolFetcher:
             fee_bps = 30
 
         info = V2PoolInfo(
-            pair=self.w3.to_checksum_address(pair),
-            token0=self.w3.to_checksum_address(t0),
-            token1=self.w3.to_checksum_address(t1),
+            pair=self._safe_checksum(pair),
+            token0=self._safe_checksum(t0),
+            token1=self._safe_checksum(t1),
             reserve0=int(r0),
             reserve1=int(r1),
             fee_bps=fee_bps
@@ -98,8 +110,8 @@ class V2PoolFetcher:
         info = self.get_pool_info(token_in, token_out)
         if not info:
             return None
-        if self.w3.to_checksum_address(token_in) == info.token0 and self.w3.to_checksum_address(token_out) == info.token1:
+        if self._safe_checksum(token_in) == info.token0 and self._safe_checksum(token_out) == info.token1:
             return info.reserve0, info.reserve1, info.fee_bps
-        elif self.w3.to_checksum_address(token_in) == info.token1 and self.w3.to_checksum_address(token_out) == info.token0:
+        elif self._safe_checksum(token_in) == info.token1 and self._safe_checksum(token_out) == info.token0:
             return info.reserve1, info.reserve0, info.fee_bps
         return None

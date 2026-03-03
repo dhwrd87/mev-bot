@@ -1,0 +1,21 @@
+{
+  "chain": "base",
+  "family": "evm",
+  "network": "mainnet",
+  "enabled_dex_packs": ["univ2_sushi", "univ3_uni"],
+  "dex_packs": {
+    "univ2_sushi": {
+      "type": "evm_univ2",
+      "factory": "0x0000000000000000000000000000000000000102",
+      "router": "0x0000000000000000000000000000000000000101",
+      "fee_bps": 30,
+      "rpc_http": "https://base-rpc.publicnode.com"
+    },
+    "univ3_uni": {
+      "type": "univ3",
+      "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+      "quoter": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+      "swap_router": "0x2626664c2603336E57B271c5C0b26F421741e481"
+    }
+  }
+}

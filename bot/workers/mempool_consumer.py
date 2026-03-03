@@ -306,8 +306,9 @@ async def _process_one(
             lag_ms = max(0.0, time.time() * 1000.0 - float(ts_ms))
             mempool_stream_consume_total.labels(**_CHAIN_LABELS, stream=STREAM).inc()
             endpoint_label = source_endpoint or "unknown"
-            mempool_stream_consume_lag_ms.labels(**get_endpoint_labels(endpoint_label)).observe(lag_ms)
-            mempool_stream_consume_lag_ms_legacy.observe(lag_ms)
+            endpoint_labels = get_endpoint_labels(endpoint_label)
+            mempool_stream_consume_lag_ms.labels(**endpoint_labels).observe(lag_ms)
+            mempool_stream_consume_lag_ms_legacy.labels(**endpoint_labels).observe(lag_ms)
             _stats["processed"] += 1
             _stats["lag_sum_ms"] += lag_ms
             _stats["lag_count"] += 1
@@ -496,8 +497,8 @@ async def _report_loop(r: Redis):
         mempool_consumer_throughput_tps.labels(**_CHAIN_LABELS, stream=STREAM, consumer=CONSUMER).set(tps)
         mempool_tps.labels(**_CHAIN_LABELS).set(tps)
         mempool_tpm.labels(**_CHAIN_LABELS).set(tps * 60.0)
-        mempool_tps_legacy.set(tps)
-        mempool_tpm_legacy.set(tps * 60.0)
+        mempool_tps_legacy.labels(**_CHAIN_LABELS).set(tps)
+        mempool_tpm_legacy.labels(**_CHAIN_LABELS).set(tps * 60.0)
 
         lag_count = int(_stats["lag_count"])
         avg_lag = (_stats["lag_sum_ms"] / lag_count) if lag_count else 0.0

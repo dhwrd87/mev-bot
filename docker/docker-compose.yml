@@ -4,27 +4,49 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.core
     image: local/mev-bot:latest
-    platform: linux/arm64
     container_name: mev-bot-cores
-
     env_file:
       - ../.env.runtime
-
     # Keep only mounts you actually need; avoid overriding the app code unless you're developing live.
     volumes:
       - ../config:/app/config
       - /mnt/nas/mev/logs:/app/logs   # or use a named volume instead of NAS if you prefer
-
-    depends_on: [redis, postgres]
+      - ../:/app
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+    user: "1000:1000"
+    environment:
+      #- PROMETHEUS_MULTIPROC_DIR=/tmp/prom_mp
+      - PROMETHEUS_DISABLE_CREATED_SERIES=true
+      - METRICS_PORT=9100
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM=mempool:pending:txs
+      - REDIS_GROUP=mempool
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"                   # FastAPI + /metrics on the same port
-    command: uvicorn bot.api.main:app --host 0.0.0.0 --port 8000
+    expose:
+      - "9100"                        # prometheus_client exporter for Prometheus on mevnet
+    command: >
+      sh -lc 'MP_DIR="$${PROMETHEUS_MULTIPROC_DIR:-/app/runtime/prom_mp}" &&
+              if [ -n "$$MP_DIR" ]; then
+                mkdir -p "$$MP_DIR" &&
+                chown -R 1000:1000 "$$MP_DIR" 2>/dev/null || true &&
+                chmod 0775 "$$MP_DIR" 2>/dev/null || true &&
+                rm -f "$$MP_DIR"/*.db "$$MP_DIR"/*.lck 2>/dev/null || true &&
+                echo "startup: prometheus multiproc dir=$$MP_DIR";
+              else
+                echo "startup: prometheus multiproc disabled (empty path)";
+              fi &&
+              exec uvicorn bot.api.main:app --host 0.0.0.0 --port 8000'
     restart: unless-stopped
     networks: [mevnet]
-
     secrets:
       - trader_pk
-
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else sys.exit(1)"]
       interval: 10s
@@ -32,73 +54,353 @@ services:
       retries: 10
       start_period: 15s
 
+
   mempool-consumer:
     image: local/mev-bot:latest
-    container_name: mev-mempool-consumer
-    command: ["python", "-m", "bot.workers.mempool_consumer"]
+    command: bash -lc "python3 -m bot.workers.mempool_consumer"
     env_file:
       - ../.env.runtime
-    depends_on: [redis]
+    environment:
+      #- PROMETHEUS_MULTIPROC_DIR=/tmp/prom_mp
+      - PROMETHEUS_DISABLE_CREATED_SERIES=true
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM=mempool:pending:txs
+      - REDIS_GROUP=mempool
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+      - MEMPOOL_CONCURRENCY=2
+      - MEMPOOL_RECLAIM_EVERY_MS=10000
+      - MEMPOOL_RECLAIM_IDLE_MS=0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+    volumes:
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+      - ../:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     networks: [mevnet]
+    user: "1000:1000"
 
+  candidate-pipeline:
+    image: local/mev-bot:latest
+    command: bash -lc "python3 -m bot.workers.candidate_pipeline"
+    env_file:
+      - ../.env.runtime
+    environment:
+      #- PROMETHEUS_MULTIPROC_DIR=/tmp/prom_mp
+      - PROMETHEUS_DISABLE_CREATED_SERIES=true
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM=mempool:pending:txs
+      - CANDIDATE_GROUP=candidate-pipeline
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+    volumes:
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+      - ../:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mevnet]
+    user: "1000:1000"
+
+  mempool-producer:
+    image: local/mev-bot:latest
+    command: bash -lc "python3 -m bot.mempool.ws_subscribe"
+    env_file:
+      - ../.env.runtime
+    volumes:
+      - ../:/app
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      # keep the public endpoint that worked in your diag:
+      - REDIS_STREAM=mempool:pending:txs
+      #- PROMETHEUS_MULTIPROC_DIR=
+      - PROMETHEUS_DISABLE_CREATED_SERIES=true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mevnet]
+    user: "1000:1000"
+
+  
   redis:
     image: redis:7-alpine
-    platform: linux/arm64
     container_name: mev-redis
-    ports: ["6379:6379"]
+    ports: 
+      - "127.0.0.1:6379:6379"
     volumes: ["redis-data:/data"]
     restart: unless-stopped
     networks: [mevnet]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 2s
+      timeout: 1s
+      retries: 60
+
 
   postgres:
     image: postgres:15
-    platform: linux/arm64
     container_name: mev-db
     environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-mev_bot}
+      - POSTGRES_USER=${POSTGRES_USER:-mev_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change_me}
     volumes: ["pg-data:/var/lib/postgresql/data"]
+    env_file:
+      - ../.env.runtime
     restart: unless-stopped
-    networks: [mevnet]
+    networks: 
+      mevnet:
+        aliases:
+          - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mev_user} -d ${POSTGRES_DB:-mev_bot} -h 127.0.0.1"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
 
   prometheus:
     image: prom/prometheus:latest
-    platform: linux/arm64
     container_name: mev-prometheus
-    ports: ["9090:9090"]
+    ports:
+      - "9090:9090"
     volumes:
       - ./prometheus:/etc/prometheus
-      - prom-data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      - "--web.listen-address=:9090"
     restart: unless-stopped
     networks: [mevnet]
 
+
   grafana:
     image: grafana/grafana:latest
-    platform: linux/arm64
     container_name: mev-grafana
-    ports: ["3000:3000"]
+    ports: 
+      - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_LOG_LEVEL=debug
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
     restart: unless-stopped
     networks: [mevnet]
+
+
+  alert-webhook-relay:
+    image: local/mev-bot:latest
+    container_name: mev-alert-webhook-relay
+    command: >
+      sh -lc 'exec uvicorn bot.ops.alert_webhook_relay:app --host 0.0.0.0 --port 8080'
+    environment:
+      - ALERT_WEBHOOK=${ALERT_WEBHOOK:-}
+    restart: unless-stopped
+    networks: [mevnet]
+
+  alert-router:
+    image: local/mev-bot:latest
+    container_name: mev-alert-router
+    command: >
+      sh -lc 'exec uvicorn ops.alert_router:app --host 0.0.0.0 --port 8090'
+    env_file:
+      - ../.env.runtime
+    environment:
+      - LOG_LEVEL=INFO
+      - DISCORD_OPERATOR_TOKEN=${DISCORD_OPERATOR_TOKEN:-}
+      - DISCORD_OPERATOR_ALERTS_CHANNEL_ID=${DISCORD_OPERATOR_ALERTS_CHANNEL_ID:-}
+      - DISCORD_OPERATOR_AUDIT_CHANNEL_ID=${DISCORD_OPERATOR_AUDIT_CHANNEL_ID:-}
+    restart: unless-stopped
+    networks: [mevnet]
+    user: "1000:1000"
+    volumes:
+      - ../:/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8090/docs').status==200 else sys.exit(1)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  discord-operator:
+    image: local/mev-bot:latest
+    profiles: ["ops"]
+    command: bash -lc "python3 -m bot.ops.discord_operator"
+    env_file:
+      - ../.env.runtime
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DISCORD_OPERATOR_API_BASE=${DISCORD_OPERATOR_API_BASE:-http://mev-bot:8000}
+      - DISCORD_OPERATOR_STATUS_CHANNEL_ID=${DISCORD_OPERATOR_STATUS_CHANNEL_ID:-}
+      - DISCORD_OPERATOR_STATUS_REFRESH_S=${DISCORD_OPERATOR_STATUS_REFRESH_S:-45}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+    depends_on:
+      mev-bot:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mevnet]
+    user: "1000:1000"
+    volumes:
+      - ../:/app
+
+  operator:
+    image: local/mev-bot:latest
+    command: bash -lc "python -m ops.discord_operator"
+    env_file:
+      - ../.env.runtime
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    working_dir: /app
+    depends_on:
+      mev-bot:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mevnet]
+    user: "1000:1000"
+    volumes:
+      - ../:/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys; c=Path('/proc/1/cmdline').read_text('latin1'); sys.exit(0 if 'ops.discord_operator' in c else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  tests:
+    image: local/mev-bot:latest
+    profiles: ["test"]
+    working_dir: /app
+    env_file:
+      - ../.env.runtime
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+    volumes:
+      - ../:/app
+    command: ["bash", "-lc", "pytest -q"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks: [mevnet]
+    user: "1000:1000"
+
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:v1.3.1
+    profiles: ["test"]
+    environment:
+      - ANVIL_IP_ADDR=0.0.0.0
+    command: >
+      anvil --port 8545 --chain-id 31337
+      --block-time 1
+      --fork-url ${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}
+    networks: [mevnet]
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  mev-bot-test:
+    image: local/mev-bot:latest
+    profiles: ["test"]
+    working_dir: /app
+    env_file:
+      - ../.env.runtime
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CHAIN=sepolia
+      - CHAIN_ID=31337
+      - CHAIN_FAMILY=evm
+      - CHAIN_PROFILE=evm-localfork
+      - RPC_HTTP_EXTRA=http://anvil:8545
+      - WS_ENDPOINTS_EXTRA=ws://anvil:8545
+      - METRICS_PORT=9100
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM=mempool:pending:txs
+      - REDIS_GROUP=mempool
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+      - PROMETHEUS_DISABLE_CREATED_SERIES=true
+    volumes:
+      - ../:/app
+      - ../tmp/prom_mp:/tmp/prom_mp:rw
+    command: >
+      sh -lc 'MP_DIR="$${PROMETHEUS_MULTIPROC_DIR:-/app/runtime/prom_mp}" &&
+              if [ -n "$$MP_DIR" ]; then
+                mkdir -p "$$MP_DIR" &&
+                chown -R 1000:1000 "$$MP_DIR" 2>/dev/null || true &&
+                chmod 0775 "$$MP_DIR" 2>/dev/null || true &&
+                rm -f "$$MP_DIR"/*.db "$$MP_DIR"/*.lck 2>/dev/null || true &&
+                echo "startup: prometheus multiproc dir=$$MP_DIR";
+              fi &&
+              exec uvicorn bot.api.main:app --host 0.0.0.0 --port 8000'
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      anvil:
+        condition: service_healthy
+    networks: [mevnet]
+    user: "1000:1000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  alertmanager:
+      image: prom/alertmanager:latest
+      container_name: mev-alertmanager
+      ports:
+        - "9093:9093"
+      depends_on:
+        alert-webhook-relay:
+          condition: service_started
+      volumes:
+        - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      networks: [mevnet]
+      restart: unless-stopped
 
 volumes:
   pg-data:
   redis-data:
   prom-data:
   grafana-data:
+  prometheus-data:
+
 
 networks:
   mevnet:
     driver: bridge
 
+
 secrets:
   trader_pk:
-    file: ./secrets/trader_private_key.txt
+    file: ${HOME}/stacks/mev/mev-bot/docker/secrets/trader_private_key.txt 

@@ -1,0 +1,23 @@
+rule_files:
+  - ../alert_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+- interval: 1m
+  input_series:
+  - series: 'mevbot_bundle_attempts_total{builder="flashbots_builder",chain="polygon"}'
+    values: '0+1x40'
+  - series: 'mevbot_bundle_inclusions_total{builder="flashbots_builder",chain="polygon"}'
+    values: '0+0x40'
+
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: NoBundleInclusions
+    exp_alerts:
+    - exp_labels:
+        chain: polygon
+        severity: critical
+      exp_annotations:
+        summary: "No bundle inclusions in 30m (polygon)"
+        description: "Potential global outage or config issue."

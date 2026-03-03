@@ -1,0 +1,62 @@
+groups:
+- name: builder-health
+  interval: 30s
+  rules:
+  # --- Recording rules (p95 latency, success ratio) ---
+  - record: builder:bundle_inclusion_latency_ms:p95
+    expr: histogram_quantile(0.95, sum by (le,builder,chain) (rate(mevbot_bundle_inclusion_latency_ms_bucket[10m])))
+  - record: builder:success_ratio:10m
+    expr: |
+      (increase(mevbot_bundle_inclusions_total[10m]) )
+      /
+      clamp_max(increase(mevbot_bundle_attempts_total[10m]), 1e9)
+
+  # --- Alerts ---
+  - alert: BuilderSuccessRatioLow
+    expr: builder:success_ratio:10m < 0.05
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Builder success low ({{ $labels.builder }} / {{ $labels.chain }})"
+      description: "Success ratio over 10m is {{ $value | printf \"%.2f\" }} (< 0.05). Investigate relay/builder issues."
+
+  - alert: BuilderLatencyHighP95
+    expr: builder:bundle_inclusion_latency_ms:p95 > 1200
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High inclusion latency p95 ({{ $labels.builder }} / {{ $labels.chain }})"
+      description: "p95 inclusion latency over 10m is {{ $value | printf \"%.0f\" }} ms (> 1200 ms)."
+
+  - alert: BundleRejectionsSurge
+    expr: sum by (builder,chain) (rate(mevbot_bundle_rejections_total[10m])) > 1
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Bundle rejections surged ({{ $labels.builder }} / {{ $labels.chain }})"
+      description: "Rejection rate > 1/min over the last 10m. Check reasons panel."
+
+  - alert: NoBundleInclusions
+    expr: sum by (chain) (increase(mevbot_bundle_inclusions_total[30m])) == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "No bundle inclusions in 30m ({{ $labels.chain }})"
+      description: "Potential global outage or config issue."
+
+  # Optional: Private orderflow router health
+  - alert: RelaySuccessRatioLow
+    expr: |
+      (increase(mevbot_relay_success_total[10m]))
+      /
+      clamp_max(increase(mevbot_relay_attempts_total[10m]), 1e9) < 0.25
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Relay success low ({{ $labels.relay }} / {{ $labels.chain }})"
+      description: "Router success ratio < 25% over 10m."

@@ -1,0 +1,210 @@
+{
+  "dashboard": {
+    "id": 1233092661817344,
+    "panels": [
+      {
+        "gridPos": {
+          "h": 5,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "textMode": "name"
+        },
+        "targets": [
+          {
+            "expr": "max by (state) (bot_state{chain_family=~\"$family\",chain=~\"$chain\"})",
+            "legendFormat": "{{state}}",
+            "refId": "A"
+          }
+        ],
+        "title": "Bot State",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 5,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(last_over_time(mevbot_pnl_realized_usd{family=~\"$family\",chain=~\"$chain\"}[24h]))",
+            "refId": "A"
+          }
+        ],
+        "title": "PnL Today (USD)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 5,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "max(last_over_time(mevbot_drawdown_usd{family=~\"$family\",chain=~\"$chain\"}[24h]))",
+            "refId": "A"
+          }
+        ],
+        "title": "Drawdown (USD)",
+        "type": "stat"
+      },
+      {
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 3,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(mevbot_tx_failed_total{family=~\"$family\",chain=~\"$chain\"}[10m])) / clamp_min(sum(increase(mevbot_tx_sent_total{family=~\"$family\",chain=~\"$chain\"}[10m])) + sum(increase(mevbot_tx_failed_total{family=~\"$family\",chain=~\"$chain\"}[10m])), 1)",
+            "refId": "A"
+          }
+        ],
+        "title": "Tx Failure Rate (10m)",
+        "type": "stat"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 5
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le) (rate(mevbot_rpc_latency_seconds_bucket{family=~\"$family\",chain=~\"$chain\"}[5m]))) or histogram_quantile(0.95, sum by (le) (rate(rpc_latency_seconds_bucket{chain_family=~\"$family\",chain=~\"$chain\"}[5m])))",
+            "legendFormat": "p95",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum by (le) (rate(mevbot_rpc_latency_seconds_bucket{family=~\"$family\",chain=~\"$chain\"}[5m]))) or histogram_quantile(0.99, sum by (le) (rate(rpc_latency_seconds_bucket{chain_family=~\"$family\",chain=~\"$chain\"}[5m])))",
+            "legendFormat": "p99",
+            "refId": "B"
+          }
+        ],
+        "title": "RPC Latency p95/p99 (s)",
+        "type": "timeseries"
+      },
+      {
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 5
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le) (rate(mevbot_tx_confirm_latency_seconds_bucket{family=~\"$family\",chain=~\"$chain\"}[5m])))",
+            "legendFormat": "confirm_p95",
+            "refId": "A"
+          }
+        ],
+        "title": "Confirm Latency p95 (s)",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 39,
+    "tags": [
+      "operator",
+      "mev"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": true,
+            "text": [
+              "All"
+            ],
+            "value": [
+              "$__all"
+            ]
+          },
+          "datasource": "Prometheus",
+          "includeAll": true,
+          "multi": true,
+          "name": "family",
+          "query": "label_values(mevbot_tx_sent_total, family)",
+          "type": "query"
+        },
+        {
+          "current": {
+            "selected": true,
+            "text": [
+              "All"
+            ],
+            "value": [
+              "$__all"
+            ]
+          },
+          "datasource": "Prometheus",
+          "includeAll": true,
+          "multi": true,
+          "name": "chain",
+          "query": "label_values(mevbot_tx_sent_total, chain)",
+          "type": "query"
+        }
+      ]
+    },
+    "timezone": "browser",
+    "title": "Operator Overview",
+    "uid": "operator-overview",
+    "version": 1
+  },
+  "meta": {
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      },
+      "organization": {
+        "canAdd": true,
+        "canDelete": true,
+        "canEdit": true
+      }
+    },
+    "apiVersion": "v0alpha1",
+    "canAdmin": true,
+    "canDelete": true,
+    "canEdit": true,
+    "canSave": true,
+    "canStar": true,
+    "created": "2026-02-28T21:06:27Z",
+    "createdBy": "Anonymous",
+    "expires": "0001-01-01T00:00:00Z",
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUid": "",
+    "folderUrl": "",
+    "hasAcl": false,
+    "isFolder": false,
+    "provisioned": true,
+    "provisionedExternalId": "operator_overview.json",
+    "slug": "operator-overview",
+    "type": "db",
+    "updated": "2026-02-28T21:06:27Z",
+    "updatedBy": "Anonymous",
+    "url": "/d/operator-overview/operator-overview",
+    "version": 1
+  }
+}

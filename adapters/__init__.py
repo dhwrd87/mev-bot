@@ -1,0 +1,1 @@
+# DEX pack adapters namespace.

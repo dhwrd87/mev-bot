@@ -1,0 +1,9 @@
+# /etc/grafana/provisioning/datasources/datasource.yml
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://mev-prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 5s

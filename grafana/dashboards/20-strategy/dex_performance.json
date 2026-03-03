@@ -86,24 +86,6 @@
           "text": "All",
           "value": "$__all"
         }
-      },
-      {
-        "name": "provider",
-        "type": "query",
-        "datasource": "Prometheus",
-        "query": "label_values(mevbot_heartbeat_ts, provider)",
-        "includeAll": true,
-        "customAllValue": ".*",
-        "multi": true,
-        "current": {
-          "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
-        }
       }
     ]
   },
@@ -208,7 +190,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\", chain=~\"$chain\", network=~\"$network\"})"
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\", chain=~\"$chain\", network=~\"$network\"}) or vector(0)"
         }
       ],
       "fieldConfig": {

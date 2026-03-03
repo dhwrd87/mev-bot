@@ -1,0 +1,65 @@
+{
+  "family": "evm",
+  "chain": "bnb",
+  "network": "mainnet",
+  "chain_id": 56,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://bsc-rpc.publicnode.com",
+        "ws": "wss://bsc-rpc.publicnode.com"
+      },
+      {
+        "alias": "bsc",
+        "http": "https://bsc-dataseed.binance.org",
+        "ws": "wss://bsc-ws-node.nariox.org:443"
+      },
+      {
+        "alias": "infura",
+        "http": "https://bsc-mainnet.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://bsc-mainnet.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://bscscan.com",
+    "tx_url": "https://bscscan.com/tx/{tx_hash}",
+    "address_url": "https://bscscan.com/address/{address}",
+    "block_url": "https://bscscan.com/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "BNB",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${BNB_UNIV2_ROUTER}",
+      "factory": "${BNB_UNIV2_FACTORY}",
+      "fee_bps": 25
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${BNB_UNIV3_FACTORY}",
+      "quoter": "${BNB_UNIV3_QUOTER}",
+      "swap_router": "${BNB_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        100,
+        500,
+        2500,
+        10000
+      ]
+    }
+  }
+}

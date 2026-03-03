@@ -1,0 +1,12 @@
+route:
+  group_by: ['alertname', 'severity', 'service']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 2h
+  receiver: 'discord-relay'
+
+receivers:
+  - name: 'discord-relay'
+    webhook_configs:
+      - url: 'http://alert-webhook-relay:8080/webhook'
+        send_resolved: true

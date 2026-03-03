@@ -1,0 +1,67 @@
+groups:
+- name: mevbot-recording
+  interval: 15s
+  rules:
+  - record: job:mevbot_relay_success_ratio:5m
+    expr: |
+      sum by (relay, chain) (rate(mevbot_relay_success_total[5m]))
+      /
+      sum by (relay, chain) (rate(mevbot_relay_attempts_total[5m]))
+
+  - record: job:mevbot_relay_latency_ms_p95:5m
+    expr: |
+      histogram_quantile(0.95,
+        sum by (relay, le) (rate(mevbot_relay_latency_ms_bucket[5m]))
+      )
+
+  - record: job:mevbot_bundle_inclusion_ratio:30m
+    expr: |
+      sum by (builder, chain) (increase(mevbot_bundle_inclusions_total[30m]))
+      /
+      sum by (builder, chain) (increase(mevbot_bundle_attempts_total[30m]))
+
+  - record: job:mevbot_orchestrator_decisions:15m
+    expr: sum by (mode, reason) (increase(mevbot_orchestrator_decisions_total[15m]))
+
+  - record: job:mevbot_stealth_decisions:15m
+    expr: sum by (decision) (increase(mevbot_stealth_decisions_total[15m]))
+
+  - record: job:mevbot_private_submit_errors:15m
+    expr: sum by (relay, chain, code) (increase(mevbot_private_submit_errors_total[15m]))
+
+  - record: job:mevbot_mempool_tpm:5m
+    expr: max_over_time(mevbot_mempool_tpm[5m])
+
+- name: mevbot-alerts
+  rules:
+  - alert: MevBotScrapeDown
+    expr: up{job="mev-bot"} == 0
+    for: 2m
+    labels: {severity: page}
+    annotations:
+      summary: "MEV bot metrics down"
+      description: "Prom cannot scrape mev-bot at {{ $labels.instance }}"
+
+  - alert: RelaySuccessLow
+    expr: job:mevbot_relay_success_ratio:5m < 0.5
+    for: 10m
+    labels: {severity: ticket}
+    annotations:
+      summary: "Relay success ratio low"
+      description: "Relay {{ $labels.relay }} on {{ $labels.chain }} has success ratio {{ $value | printf \"%.2f\" }}"
+
+  - alert: NoStealthDecisions
+    expr: sum(increase(mevbot_stealth_decisions_total[30m])) == 0
+    for: 30m
+    labels: {severity: warn}
+    annotations:
+      summary: "No stealth decisions in 30m"
+      description: "Stealth engine appears idle."
+
+  - alert: PrivateTimeoutSpike
+    expr: sum by (relay, chain) (increase(mevbot_private_submit_errors_total{code="timeout"}[10m])) > 5
+    for: 10m
+    labels: {severity: warn}
+    annotations:
+      summary: "Private submit timeouts rising"
+      description: "Timeouts > 5/10m on {{ $labels.relay }} {{ $labels.chain }}"

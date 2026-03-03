@@ -1,0 +1,64 @@
+{
+  "family": "evm",
+  "chain": "base-sepolia",
+  "network": "testnet",
+  "chain_id": 84532,
+  "rpc": {
+    "endpoints": [
+      {
+        "alias": "publicnode",
+        "http": "https://base-sepolia-rpc.publicnode.com",
+        "ws": "wss://base-sepolia-rpc.publicnode.com"
+      },
+      {
+        "alias": "base",
+        "http": "https://sepolia.base.org",
+        "ws": "wss://sepolia.base.org"
+      },
+      {
+        "alias": "infura",
+        "http": "https://base-sepolia.infura.io/v3/${INFURA_KEY}",
+        "ws": "wss://base-sepolia.infura.io/ws/v3/${INFURA_KEY}"
+      }
+    ]
+  },
+  "explorer": {
+    "base_url": "https://sepolia.basescan.org",
+    "tx_url": "https://sepolia.basescan.org/tx/{tx_hash}",
+    "address_url": "https://sepolia.basescan.org/address/{address}",
+    "block_url": "https://sepolia.basescan.org/block/{block}"
+  },
+  "native_asset": {
+    "symbol": "ETH",
+    "decimals": 18
+  },
+  "risk": {
+    "max_fee_gwei": 120.0,
+    "slippage_bps": 100,
+    "max_daily_loss_usd": 500.0,
+    "min_edge_bps": 8.0
+  },
+  "dexes_enabled": [
+    "univ2_default",
+    "univ3_default"
+  ],
+  "dex_configs": {
+    "univ2_default": {
+      "type": "evm_univ2",
+      "router": "${BASE_SEPOLIA_UNIV2_ROUTER}",
+      "factory": "${BASE_SEPOLIA_UNIV2_FACTORY}",
+      "fee_bps": 30
+    },
+    "univ3_default": {
+      "type": "evm_univ3",
+      "factory": "${BASE_SEPOLIA_UNIV3_FACTORY}",
+      "quoter": "${BASE_SEPOLIA_UNIV3_QUOTER}",
+      "swap_router": "${BASE_SEPOLIA_UNIV3_SWAP_ROUTER}",
+      "fee_tiers": [
+        500,
+        3000,
+        10000
+      ]
+    }
+  }
+}
