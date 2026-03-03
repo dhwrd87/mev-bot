@@ -1,0 +1,15 @@
+
+# Secrets / local env
+.env
+.env.*
+docker/.env
+docker/secrets/
+**/secrets/
+**/*private_key*.txt
+**/*trader_private_key*.txt
+
+# Local artifacts
+__pycache__/
+*.pyc
+tmp/
+.DS_Store
