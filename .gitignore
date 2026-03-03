@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 tmp/
 .DS_Store
+runtime/secrets.runtime.json
 
 # env files
 .env
