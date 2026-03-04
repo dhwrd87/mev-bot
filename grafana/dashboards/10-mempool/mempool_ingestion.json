@@ -1,0 +1,288 @@
+{
+  "title": "10 Mempool & Ingestion",
+  "timezone": "browser",
+  "version": 2,
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "type": "gauge",
+      "title": "TPM (unique tx / 1m)",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "min": 0,
+        "max": 600
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) * 60 or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "gauge",
+      "title": "TPS (unique tx / 1s)",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "min": 0,
+        "max": 20
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "WS Connected (per endpoint)",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "max by (endpoint) (mevbot_mempool_ws_connected{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Unique tx rate",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) * 60",
+          "legendFormat": "TPM",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Per-endpoint intake & errors",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 8
+      },
+      "transformations": [
+        {
+          "id": "merge"
+        }
+      ],
+      "targets": [
+        {
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
+          "legendFormat": "rx {{endpoint}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
+          "legendFormat": "err {{endpoint}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
+          "legendFormat": "reconnects {{endpoint}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Exporter Live (s)",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\",provider=~\"$provider\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present (mevbot_*)",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count({__name__=~\"mevbot_.*\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "family",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_heartbeat_ts, family)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "chain",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_heartbeat_ts, chain)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "network",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_heartbeat_ts, network)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "dex",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_heartbeat_ts, dex)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "strategy",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_heartbeat_ts, strategy)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "provider",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mevbot_heartbeat_ts, provider)",
+        "includeAll": true,
+        "customAllValue": ".*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "id": null,
+  "uid": "mempool-ingestion",
+  "refresh": "30s",
+  "tags": [
+    "canonical",
+    "mempool"
+  ]
+}

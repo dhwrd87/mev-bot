@@ -96,7 +96,7 @@ slot_lag = Gauge(
 heartbeat_ts = Gauge(
     "mevbot_heartbeat_ts",
     "Bot heartbeat UNIX timestamp (seconds)",
-    ["family", "chain", "network"],
+    ["family", "chain", "network", "provider", "dex", "strategy"],
 )
 chain_info = Gauge(
     "mevbot_chain_info",
@@ -418,6 +418,12 @@ def seed_default_series(*, family: str, chain: str) -> None:
     tx_sent_total.labels(family=fam, chain=ch, network=network, strategy=strategy).inc(0)
     tx_confirmed_total.labels(family=fam, chain=ch, network=network, strategy=strategy).inc(0)
     tx_failed_total.labels(family=fam, chain=ch, network=network, strategy=strategy, reason=reason).inc(0)
+    tx_confirm_latency_seconds.labels(
+        family=fam, chain=ch, network=network, strategy=strategy
+    ).observe(0.0)
+    rpc_latency_seconds.labels(
+        family=fam, chain=ch, network=network, provider=provider
+    ).observe(0.0)
     sim_fail_total.labels(family=fam, chain=ch, network=network, strategy=strategy, reason=reason).inc(0)
     tx_revert_total.labels(family=fam, chain=ch, network=network, reason=reason).inc(0)
     blocked_by_operator_total.labels(family=fam, chain=ch, network=network, scope="unknown", reason=reason).inc(0)
@@ -452,7 +458,14 @@ def seed_default_series(*, family: str, chain: str) -> None:
     slot_lag.labels(family=fam, chain=ch, network=network, provider=provider).set(0.0)
     chain_head.labels(family=fam, chain=ch, network=network, provider=provider).set(0.0)
     chain_slot.labels(family=fam, chain=ch, network=network, provider=provider).set(0.0)
-    heartbeat_ts.labels(family=fam, chain=ch, network=network).set(0.0)
+    heartbeat_ts.labels(
+        family=fam,
+        chain=ch,
+        network=network,
+        provider=provider,
+        dex=dex,
+        strategy=strategy,
+    ).set(0.0)
     chain_info.labels(family=fam, chain=ch, network=network).set(1.0)
     rpc_errors_total.labels(family=fam, chain=ch, network=network, provider=provider, code_bucket=reason).inc(0)
     stream_events_observed_total.labels(stream=os.getenv("REDIS_STREAM", "mempool:pending:txs"), source="api_probe").inc(0)
@@ -548,9 +561,24 @@ def set_slot_lag(*, family: str, chain: str, provider: str, lag: float) -> None:
     ).set(float(lag))
 
 
-def set_heartbeat(*, family: str, chain: str, unix_ts: float) -> None:
-    c = _canon_ctx(family=family, chain=chain)
-    heartbeat_ts.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(float(unix_ts))
+def set_heartbeat(
+    *,
+    family: str,
+    chain: str,
+    unix_ts: float,
+    provider: str = "unknown",
+    dex: str = "unknown",
+    strategy: str = "default",
+) -> None:
+    c = _canon_ctx(family=family, chain=chain, provider=provider, dex=dex, strategy=strategy)
+    heartbeat_ts.labels(
+        family=c["family"],
+        chain=c["chain"],
+        network=c["network"],
+        provider=c["provider"],
+        dex=c["dex"],
+        strategy=c["strategy"],
+    ).set(float(unix_ts))
     chain_info.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(1.0)
 
 

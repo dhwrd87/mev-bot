@@ -8,7 +8,7 @@ PYTHON_CMD := $(shell if [ -x "$(PYTHON)" ]; then echo "$(PYTHON)"; else echo "p
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv deps lint typecheck test test-v test-warnings test-verbose compose-up compose-down smoke sim-smoke status pause-test redis-peek consumer-smoke \
+.PHONY: help venv deps lint typecheck test test-v test-warnings test-verbose compose-up compose-down smoke sim-smoke status metrics-smoke pause-test redis-peek consumer-smoke \
 	gap1-proof gap2-proof gap3-proof \
 	proof-all \
 	proof-bootstrap proof-typed-config proof-postgres-migrations proof-telemetry-baseline proof-mempool-monitor \
@@ -35,6 +35,7 @@ help:
 	@echo "  make smoke                        Run golden-path smoke (mocked)"
 	@echo "  make sim-smoke                    Run simulator smoke (no external deps)"
 	@echo "  make status                       Print runtime/system status snapshot"
+	@echo "  make metrics-smoke                Verify mev-bot Prometheus target + required mevbot_* series"
 	@echo "  make pause-test                   Run pause/resume integration test"
 	@echo "  make redis-peek                   Verify Redis mempool stream growth and show latest entry"
 	@echo "  make consumer-smoke               Verify consumer RPC fetch success appears in logs"
@@ -129,6 +130,10 @@ sim-smoke:
 
 status:
 	PYTHONPATH=. $(PYTHON_CMD) scripts/status.py --write
+
+metrics-smoke:
+	docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml exec -T mev-bot \
+		python scripts/metrics_smoke.py --prom-url $${PROM_URL:-http://prometheus:9090}
 
 pause-test:
 	@if [ -x "$(VENV_BIN)/pytest" ]; then \

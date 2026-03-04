@@ -66,9 +66,10 @@ smoke-stealth:
 
 ## Discord Operator Bot (Separate From Alerting)
 - Existing alerting remains unchanged:
-  - `DISCORD_WEBHOOK` (app alerts)
+  - `DISCORD_WEBHOOK` (app alerts, optional; empty disables webhook publishing and logs `webhook_disabled`)
   - `ALERT_WEBHOOK` (Alertmanager relay)
 - Operator process is separate and optional (`discord-operator` service, `ops` profile).
+- Canonical operator implementation is `bot.ops.discord_operator`; the legacy `operator` compose service was removed.
 
 ### Required env
 - `DISCORD_OPERATOR_TOKEN`

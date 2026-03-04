@@ -10,7 +10,7 @@ services:
     # Keep only mounts you actually need; avoid overriding the app code unless you're developing live.
     volumes:
       - ../config:/app/config
-      - /mnt/nas/mev/logs:/app/logs   # or use a named volume instead of NAS if you prefer
+      #- /mnt/nas/mev/logs:/app/logs   # or use a named volume instead of NAS if you prefer
       - ../:/app
       - ../tmp/prom_mp:/tmp/prom_mp:rw
     user: "1000:1000"
@@ -21,6 +21,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - REDIS_STREAM=mempool:pending:txs
       - REDIS_GROUP=mempool
+      - SUPPORTED_FAMILIES=${SUPPORTED_FAMILIES:-evm}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
     depends_on:
       redis:
@@ -261,32 +262,6 @@ services:
     user: "1000:1000"
     volumes:
       - ../:/app
-
-  operator:
-    image: local/mev-bot:latest
-    command: bash -lc "python -m ops.discord_operator"
-    env_file:
-      - ../.env.runtime
-    environment:
-      - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=INFO
-    working_dir: /app
-    depends_on:
-      mev-bot:
-        condition: service_started
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-    networks: [mevnet]
-    user: "1000:1000"
-    volumes:
-      - ../:/app
-    healthcheck:
-      test: ["CMD", "python", "-c", "from pathlib import Path; import sys; c=Path('/proc/1/cmdline').read_text('latin1'); sys.exit(0 if 'ops.discord_operator' in c else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
 
   tests:
     image: local/mev-bot:latest

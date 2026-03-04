@@ -95,10 +95,21 @@ class TelemetrySettings(BaseModel):
     discord_webhook: Optional[AnyUrl] = Field(default=None, alias="DISCORD_WEBHOOK")
     prom_pushgateway: Optional[AnyUrl] = Field(default=None, alias="PROM_PUSHGATEWAY")
 
+    @field_validator("discord_webhook", "prom_pushgateway", mode="before")
+    @classmethod
+    def _empty_url_to_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class ChainSettings(BaseModel):
-    chain: Literal["polygon", "ethereum", "base", "sepolia", "amoy", "mainnet"] = Field(alias="CHAIN")
-    chain_id: PositiveInt = Field(alias="CHAIN_ID")
+    chain: Literal[
+        "polygon", "ethereum", "base", "sepolia", "amoy", "mainnet", "solana", "solana-devnet"
+    ] = Field(alias="CHAIN")
+    chain_id: int = Field(alias="CHAIN_ID", ge=0)
     rpc_primary: AnyUrl = Field(alias="RPC_HTTP")
     rpc_backup: AnyUrl = Field(alias="RPC_HTTP_BACKUP")
 

@@ -1,14 +1,14 @@
 {
   "id": null,
-  "uid": "strategy-analytics",
-  "title": "20 Strategy Analytics",
+  "uid": "execution-overview",
+  "title": "30 Execution",
   "schemaVersion": 39,
   "version": 3,
   "timezone": "browser",
   "refresh": "30s",
   "tags": [
     "canonical",
-    "strategy"
+    "execution"
   ],
   "templating": {
     "list": [
@@ -108,75 +108,92 @@
   },
   "panels": [
     {
-      "type": "table",
-      "title": "PnL by Strategy/DEX/Chain",
+      "type": "bargauge",
+      "title": "Revert Reasons (10m)",
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 24,
+        "w": 8,
         "h": 7
       },
       "targets": [
         {
           "refId": "A",
-          "format": "table",
-          "expr": "sum by (strategy, chain) (mevbot_pnl_realized_usd{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\"})"
-        }
-      ]
-    },
-    {
-      "type": "heatmap",
-      "title": "Edge Histogram (if available)",
-      "gridPos": {
-        "x": 0,
-        "y": 7,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "heatmap",
-          "expr": "sum by (le) (rate(mevbot_edge_bps_bucket{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\"}[10m])) or vector(0)"
-        }
-      ]
-    },
-    {
-      "type": "heatmap",
-      "title": "Slippage Histogram (if available)",
-      "gridPos": {
-        "x": 12,
-        "y": 7,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "heatmap",
-          "expr": "sum by (le) (rate(mevbot_slippage_bps_bucket{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\"}[10m])) or vector(0)"
+          "expr": "sum by (reason) (increase(mevbot_tx_revert_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[10m]))",
+          "legendFormat": "{{reason}}"
         }
       ]
     },
     {
       "type": "bargauge",
-      "title": "Filter Reason Pareto (24h)",
+      "title": "Sim Fail Reasons (10m)",
       "gridPos": {
-        "x": 0,
-        "y": 15,
-        "w": 24,
+        "x": 8,
+        "y": 0,
+        "w": 8,
         "h": 7
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "topk(12, sum by (reason) (increase(mevbot_sim_fail_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\"}[24h])))",
-          "legendFormat": "sim_fail {{reason}}"
+          "expr": "sum by (reason) (increase(mevbot_sim_fail_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\"}[10m]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC Error Rate by Provider (5m)",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider, code_bucket) (rate(mevbot_rpc_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
+          "legendFormat": "{{provider}} {{code_bucket}}"
+        }
+      ]
+    },
+    {
+      "type": "heatmap",
+      "title": "Confirm Latency Histogram",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 14,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (le) (rate(mevbot_tx_confirm_latency_seconds_bucket{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m]))",
+          "format": "heatmap"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Head/Slot Lag",
+      "gridPos": {
+        "x": 14,
+        "y": 7,
+        "w": 10,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (provider) (mevbot_head_lag_blocks{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"})",
+          "legendFormat": "head_lag {{provider}}"
         },
         {
           "refId": "B",
-          "expr": "topk(12, sum by (reason) (increase(mevbot_tx_revert_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[24h])))",
-          "legendFormat": "revert {{reason}}"
+          "expr": "max by (provider) (mevbot_slot_lag{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"})",
+          "legendFormat": "slot_lag {{provider}}"
         }
       ]
     },
@@ -185,7 +202,7 @@
       "title": "Exporter Live (s)",
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 15,
         "w": 6,
         "h": 4
       },

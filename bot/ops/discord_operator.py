@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import secrets
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
+from urllib.parse import urlencode
 
 import httpx
 import psycopg
 from discord.ext import commands
 import discord
+from discord import app_commands
 from psycopg import errors as pg_errors
 
-from bot.core.chain_adapter import parse_chain_selection, validate_chain_selection
+from bot.core.chain_adapter import parse_chain_selection
 from bot.ops.status_card import StatusCardManager, StatusCardSnapshot, fmt_num
 
 
@@ -51,6 +54,29 @@ def _ensure_ops_state_table(conn) -> None:
     conn.execute(
         "INSERT INTO ops_state(k, v) VALUES ('chain_selection', %s) ON CONFLICT (k) DO NOTHING",
         (f"EVM:{default_chain}",),
+    )
+
+
+def _ensure_operator_events_table(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operator_events(
+          op_id TEXT PRIMARY KEY,
+          ts TIMESTAMPTZ DEFAULT now(),
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL,
+          value TEXT,
+          reason TEXT,
+          applied BOOLEAN NOT NULL DEFAULT false,
+          error TEXT,
+          desired_state TEXT,
+          desired_mode TEXT,
+          desired_chain TEXT,
+          effective_state TEXT,
+          effective_chain TEXT,
+          created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """
     )
 
 
@@ -112,14 +138,18 @@ class OperatorBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix=os.getenv("DISCORD_OPERATOR_PREFIX", "!"), intents=intents)
-        self.api_base = os.getenv("DISCORD_OPERATOR_API_BASE", "http://mev-bot:8000").rstrip("/")
+        self.api_base = os.getenv("MEVBOT_API_URL", os.getenv("DISCORD_OPERATOR_API_BASE", "http://mev-bot:8000")).rstrip("/")
+        self.guild_id = int(os.getenv("DISCORD_OPERATOR_GUILD_ID", "0") or "0")
         self.audit_channel_id = int(os.getenv("DISCORD_OPERATOR_AUDIT_CHANNEL_ID", "0") or "0")
         self.command_channel_id = int(os.getenv("DISCORD_OPERATOR_COMMAND_CHANNEL_ID", "0") or "0")
         self.confirm_ttl_s = int(os.getenv("DISCORD_OPERATOR_CONFIRM_TTL_S", "120"))
         self.status_channel_id = int(os.getenv("DISCORD_OPERATOR_STATUS_CHANNEL_ID", "0") or "0")
         self.status_refresh_s = int(os.getenv("DISCORD_OPERATOR_STATUS_REFRESH_S", "45"))
+        self.instance_id = os.getenv("BOT_INSTANCE_ID", secrets.token_hex(4))
+        self.operator_impl = "bot.ops.discord_operator"
+        self.sync_mode = "global"
         self.pending: Dict[str, PendingConfirmation] = {}
-        self.http = httpx.AsyncClient(timeout=8.0)
+        self.api_http = httpx.AsyncClient(timeout=8.0)
         self.status_card = StatusCardManager(
             bot=self,
             status_channel_id=self.status_channel_id,
@@ -130,20 +160,54 @@ class OperatorBot(commands.Bot):
             audit_fn=self._audit,
         )
 
+    async def setup_hook(self) -> None:
+        try:
+            if self.guild_id > 0:
+                guild_obj = discord.Object(id=self.guild_id)
+                synced = await self.tree.sync(guild=guild_obj)
+                self.sync_mode = "guild"
+                log.info(
+                    "slash commands synced to guild id=%s count=%s operator_impl=%s instance_id=%s",
+                    self.guild_id,
+                    len(synced),
+                    self.operator_impl,
+                    self.instance_id,
+                )
+            else:
+                synced = await self.tree.sync()
+                self.sync_mode = "global"
+                log.info(
+                    "slash commands synced globally count=%s operator_impl=%s instance_id=%s",
+                    len(synced),
+                    self.operator_impl,
+                    self.instance_id,
+                )
+        except Exception as e:
+            log.warning("slash command sync failed: %s", e)
+
     async def close(self) -> None:
         await self.status_card.stop()
-        await self.http.aclose()
+        await self.api_http.aclose()
         await super().close()
 
     async def on_ready(self):
         log.info(
-            "discord-operator ready user=%s command_channel_id=%s status_channel_id=%s refresh_s=%s",
+            "discord-operator ready user=%s command_channel_id=%s status_channel_id=%s refresh_s=%s operator_impl=%s instance_id=%s",
             self.user,
             self.command_channel_id,
             self.status_channel_id,
             self.status_refresh_s,
+            self.operator_impl,
+            self.instance_id,
         )
         self.status_card.start()
+
+    def _build_url(self, path: str, params: Optional[Dict[str, Any]] = None) -> str:
+        clean = path if path.startswith("/") else f"/{path}"
+        base = f"{self.api_base}{clean}"
+        if params:
+            return f"{base}?{urlencode(params, doseq=True)}"
+        return base
 
     async def _check_channel(self, ctx: commands.Context) -> bool:
         if self.command_channel_id and ctx.channel and ctx.channel.id != self.command_channel_id:
@@ -167,15 +231,86 @@ class OperatorBot(commands.Bot):
         except Exception as e:
             log.warning("failed to send audit message: %s", e)
 
-    async def _api_get(self, path: str) -> dict:
-        r = await self.http.get(f"{self.api_base}{path}")
+    async def _api_get(self, path: str, params: Dict[str, Any] | None = None) -> dict:
+        r = await self.api_http.get(self._build_url(path, params=params))
         r.raise_for_status()
         return r.json()
 
-    async def _api_post(self, path: str, params: dict | None = None) -> dict:
-        r = await self.http.post(f"{self.api_base}{path}", params=params)
+    async def _api_post(self, path: str, params: dict | None = None, json: dict | None = None) -> dict:
+        r = await self.api_http.post(self._build_url(path), params=params, json=json)
         r.raise_for_status()
         return r.json()
+
+    def _read_desired_fields(self) -> tuple[str, str, str]:
+        paused = _to_bool(_read_ops_value("paused", "true"))
+        desired_state = "PAUSED" if paused else "TRADING"
+        desired_mode = _read_ops_value("mode", "paper")
+        desired_chain = _read_ops_value("chain_selection", f"EVM:{str(os.getenv('CHAIN', 'sepolia')).strip().lower() or 'sepolia'}")
+        return desired_state, desired_mode, desired_chain
+
+    async def _read_effective_fields(self) -> tuple[str, str]:
+        try:
+            health = await self._api_get("/health")
+            return str(health.get("state", "UNKNOWN")), str(health.get("chain", "unknown"))
+        except Exception:
+            return "UNKNOWN", "unknown"
+
+    def _record_operator_event_start(self, *, op_id: str, actor: str, action: str, value: str, reason: str) -> None:
+        desired_state, desired_mode, desired_chain = self._read_desired_fields()
+        with psycopg.connect(_ops_dsn(), autocommit=True) as conn:
+            _ensure_ops_state_table(conn)
+            _ensure_operator_events_table(conn)
+            conn.execute(
+                """
+                INSERT INTO operator_events(
+                  op_id, actor, action, value, reason, applied,
+                  desired_state, desired_mode, desired_chain
+                )
+                VALUES (%s, %s, %s, %s, %s, false, %s, %s, %s)
+                ON CONFLICT (op_id) DO NOTHING
+                """,
+                (op_id, actor, action, value, reason, desired_state, desired_mode, desired_chain),
+            )
+
+    def _record_operator_event_finish(
+        self,
+        *,
+        op_id: str,
+        applied: bool,
+        error: Optional[str],
+        effective_state: str,
+        effective_chain: str,
+    ) -> None:
+        desired_state, desired_mode, desired_chain = self._read_desired_fields()
+        with psycopg.connect(_ops_dsn(), autocommit=True) as conn:
+            _ensure_ops_state_table(conn)
+            _ensure_operator_events_table(conn)
+            conn.execute(
+                """
+                UPDATE operator_events
+                SET
+                  applied=%s,
+                  error=%s,
+                  desired_state=%s,
+                  desired_mode=%s,
+                  desired_chain=%s,
+                  effective_state=%s,
+                  effective_chain=%s,
+                  ts=now(),
+                  created_at=now()
+                WHERE op_id=%s
+                """,
+                (
+                    bool(applied),
+                    error,
+                    desired_state,
+                    desired_mode,
+                    desired_chain,
+                    effective_state,
+                    effective_chain,
+                    op_id,
+                ),
+            )
 
     async def _set_state(self, target: str, *, actor: str, reason: str, force: bool = False) -> dict:
         return await self._api_post(
@@ -189,7 +324,10 @@ class OperatorBot(commands.Bot):
 
     async def _status_payload(self) -> Tuple[str, dict]:
         health = await self._api_get("/health")
-        metrics_resp = await self.http.get(f"{self.api_base}/metrics")
+        status = {}
+        with contextlib.suppress(Exception):
+            status = await self._api_get("/status")
+        metrics_resp = await self.api_http.get(f"{self.api_base}/metrics")
         metrics_resp.raise_for_status()
         metrics_text = metrics_resp.text
         mode = _read_ops_value("mode", "paper")
@@ -214,7 +352,7 @@ class OperatorBot(commands.Bot):
             chain_name = str(health.get("chain", "unknown"))
 
         payload = {
-            "state": str(health.get("state", "UNKNOWN")),
+            "state": str(status.get("effective_state", health.get("state", "UNKNOWN"))),
             "chain": chain_name,
             "paused": bool(health.get("paused", True)),
             "chain_family": chain_family,
@@ -227,14 +365,34 @@ class OperatorBot(commands.Bot):
             "last_trade_time": last_trade_ts or "n/a",
             "today_pnl": today_pnl,
             "error_rate_pct": err_rate_pct,
+            "last_op_id_applied": status.get("last_op_id_applied"),
+            "last_op_apply_error": status.get("last_op_apply_error"),
+            "desired_state": status.get("desired_state"),
+            "desired_mode": status.get("desired_mode"),
+            "desired_chain": status.get("desired_chain"),
+            "effective_chain": status.get("effective_chain", chain_name),
+            "rpc_url": status.get("rpc_url", "—"),
+            "ws_url": status.get("ws_url", "—"),
+            "head": status.get("head"),
+            "lag_blocks": status.get("lag_blocks"),
+            "switching_in_progress": bool(status.get("switching_in_progress", False)),
+            "last_transition_error": status.get("last_transition_error"),
+            "mempool_stream": status.get("mempool_stream", "—"),
         }
         msg = (
-            f"state={payload['state']} chain=evm:{payload['chain']} paused={payload['paused']} "
-            f"mode={payload['mode']} kill_switch={payload['kill_switch']} "
+            f"state={payload['state']} desired_chain={payload['desired_chain'] or '—'} "
+            f"effective_chain={payload['effective_chain'] or '—'} paused={payload['paused']} "
+            f"mode={payload['mode']} desired_mode={payload['desired_mode'] or '—'} kill_switch={payload['kill_switch']} "
             f"rpc=({payload['rpc_health']}) "
+            f"rpc_url={payload['rpc_url'] or '—'} ws_url={payload['ws_url'] or '—'} "
+            f"head={payload['head']} lag_blocks={payload['lag_blocks']} switching={payload['switching_in_progress']} "
+            f"switch_err={payload['last_transition_error'] or '—'} "
+            f"stream={payload['mempool_stream']} "
             f"last_trade={payload['last_trade_time']} today_pnl={payload['today_pnl']} "
             f"error_rate={payload['error_rate_pct']:.2f}% "
-            f"xlen={payload['xlen']:.0f} lag={payload['lag']:.0f} rpc429={payload['rpc_429_total']:.0f}"
+            f"xlen={payload['xlen']:.0f} lag={payload['lag']:.0f} rpc429={payload['rpc_429_total']:.0f} "
+            f"last_op_id_applied={payload['last_op_id_applied'] or '—'} "
+            f"last_op_apply_error={payload['last_op_apply_error'] or '—'}"
         )
         return msg, payload
 
@@ -260,12 +418,20 @@ class OperatorBot(commands.Bot):
     async def _status_card_snapshot(self) -> StatusCardSnapshot:
         _, payload = await self._status_payload()
         return StatusCardSnapshot(
-            state=str(payload.get("state", "UNKNOWN")),
-            mode=str(payload.get("mode", "paper")),
+            state=f"{payload.get('state', 'UNKNOWN')} (desired={payload.get('desired_state', '—')})",
+            mode=f"{payload.get('mode', 'paper')} (desired={payload.get('desired_mode', '—')})",
             chain_family=str(payload.get("chain_family", "evm")),
-            chain=str(payload.get("chain", "unknown")),
-            rpc_health=str(payload.get("rpc_health", "n/a")),
-            last_trade_time=str(payload.get("last_trade_time", "n/a")),
+            chain=f"{payload.get('effective_chain', 'unknown')} (desired={payload.get('desired_chain', '—')})",
+            rpc_health=(
+                f"{payload.get('rpc_health', 'n/a')} "
+                f"rpc={payload.get('rpc_url', '—')} ws={payload.get('ws_url', '—')} "
+                f"head={payload.get('head', '—')} lag={payload.get('lag_blocks', '—')} "
+                f"switching={payload.get('switching_in_progress', False)}"
+            ),
+            last_trade_time=(
+                f"{payload.get('last_trade_time', 'n/a')} "
+                f"(switch_err={payload.get('last_transition_error') or '—'})"
+            ),
             today_pnl=str(payload.get("today_pnl", "n/a")),
             error_rate=f"{float(payload.get('error_rate_pct', 0.0)):.2f}%",
             updated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -304,87 +470,191 @@ class OperatorBot(commands.Bot):
         self.pending.pop(code, None)
         return item
 
-    async def _apply_action(self, *, actor: str, action: str, value: str, reason: str) -> str:
+    async def _apply_action(self, *, actor: str, action: str, value: str, reason: str) -> dict:
+        op_id = secrets.token_hex(12)
+        self._record_operator_event_start(op_id=op_id, actor=actor, action=action, value=value, reason=reason)
+        result_text = ""
         a = action.lower().strip()
         v = value.lower().strip()
-        if a == "pause":
-            await self._api_post("/pause")
-            await self._audit(f"operator_action actor={actor} action=pause reason={reason}")
-            return "paused"
-        if a == "resume":
-            await self._api_post("/resume")
-            await self._audit(f"operator_action actor={actor} action=resume reason={reason}")
-            return "resumed_to_trading"
-        if a == "mode":
-            if v not in {"dryrun", "paper", "live"}:
-                raise ValueError("mode must be one of: dryrun|paper|live")
-            _write_ops_value("mode", v)
-            await self._audit(f"operator_action actor={actor} action=mode value={v} reason={reason}")
-            return f"mode={v}"
-        if a == "kill_switch":
-            if v in {"on", "true", "1"}:
-                _write_ops_value("kill_switch", "true")
-                await self._audit(f"operator_action actor={actor} action=kill_switch value=on reason={reason}")
-                return "kill_switch=on"
-            if v in {"off", "false", "0"}:
-                _write_ops_value("kill_switch", "false")
-                await self._audit(f"operator_action actor={actor} action=kill_switch value=off reason={reason}")
-                return "kill_switch=off"
-            raise ValueError("kill-switch must be on|off")
-        if a == "chain_set":
-            selection = parse_chain_selection(value)
-            selection_name = f"{selection.family}:{selection.chain}"
+        try:
+            if a == "pause":
+                await self._api_post("/pause")
+                result_text = "paused"
+            elif a == "resume":
+                await self._api_post("/resume")
+                result_text = "resumed_to_trading"
+            elif a == "mode":
+                if v not in {"dryrun", "paper", "live"}:
+                    raise ValueError("mode must be one of: dryrun|paper|live")
+                _write_ops_value("mode", v)
+                result_text = f"mode={v}"
+            elif a == "kill_switch":
+                if v in {"on", "true", "1"}:
+                    _write_ops_value("kill_switch", "true")
+                    result_text = "kill_switch=on"
+                elif v in {"off", "false", "0"}:
+                    _write_ops_value("kill_switch", "false")
+                    result_text = "kill_switch=off"
+                else:
+                    raise ValueError("kill-switch must be on|off")
+            elif a == "chain_set":
+                selection = parse_chain_selection(value)
+                selection_name = f"{selection.family}:{selection.chain}"
 
-            await self._set_state("PAUSED", actor=actor, reason=f"chain_switch_pause:{reason}")
-            _write_ops_value("chain_selection", selection_name)
-            await self._api_post("/chain/select", params={"name": selection_name})
-            await self._set_state("SYNCING", actor=actor, reason=f"chain_switch_syncing:{reason}")
+                await self._set_state("PAUSED", actor=actor, reason=f"chain_switch_pause:{reason}")
+                await self._api_post("/operator/chain", params={"name": selection_name})
+                await self._set_state("SYNCING", actor=actor, reason=f"chain_switch_syncing:{reason}")
+                result_text = f"chain_target_set selection={selection_name} (runtime hot-switch in progress)"
+            else:
+                raise ValueError(f"unknown action: {action}")
 
-            started = time.time()
-            try:
-                validation = await asyncio.to_thread(validate_chain_selection, selection)
-            except Exception as e:
-                await self._set_state("DEGRADED", actor="system", reason=f"chain_switch_validation_failed:{selection_name}")
-                await self._audit(
-                    f"operator_action actor={actor} action=chain_set value={selection_name} "
-                    f"result=validation_failed reason={reason} err={e}"
-                )
-                raise
-
-            elapsed_s = time.time() - started
-            await self._set_state("READY", actor="system", reason=f"chain_switch_ready:{selection_name}")
-            await self._audit(
-                f"operator_action actor={actor} action=chain_set value={selection_name} result=ready "
-                f"reason={reason} endpoint={validation.get('endpoint','')} wallet={validation.get('wallet','')} "
-                f"balance={validation.get('balance','')} took_s={elapsed_s:.2f}"
+            effective_state, effective_chain = await self._read_effective_fields()
+            self._record_operator_event_finish(
+                op_id=op_id,
+                applied=True,
+                error=None,
+                effective_state=effective_state,
+                effective_chain=effective_chain,
             )
-            return f"chain_switch_ready selection={selection_name} endpoint={validation.get('endpoint','')} took_s={elapsed_s:.2f} (manual resume required)"
-        raise ValueError(f"unknown action: {action}")
+            await self._audit(
+                f"operator_action op_id={op_id} actor={actor} action={a} value={v} reason={reason} result=success"
+            )
+            return {"op_id": op_id, "result": result_text}
+        except Exception as e:
+            effective_state, effective_chain = await self._read_effective_fields()
+            self._record_operator_event_finish(
+                op_id=op_id,
+                applied=False,
+                error=str(e),
+                effective_state=effective_state,
+                effective_chain=effective_chain,
+            )
+            await self._audit(
+                f"operator_action op_id={op_id} actor={actor} action={a} value={v} reason={reason} result=fail err={e}"
+            )
+            raise
 
 
 def _build_bot() -> OperatorBot:
     bot = OperatorBot()
 
+    async def _chain_choices(prefix: str = "") -> list[str]:
+        try:
+            payload = await bot._api_get("/chains")
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            keys = [str(it.get("key", "")).strip() for it in items if str(it.get("key", "")).strip()]
+            if prefix:
+                p = prefix.strip().lower()
+                keys = [k for k in keys if p in k.lower()]
+            return keys[:25]
+        except Exception:
+            return []
+
+    async def handle_status() -> str:
+        text, _ = await bot._status_payload()
+        return text
+
+    async def handle_pause(actor: str, reason: str = "manual") -> str:
+        out = await bot._apply_action(actor=actor, action="pause", value="true", reason=reason)
+        return f"ok {out['result']} op_id={out['op_id']}"
+
+    async def handle_resume(actor: str, reason: str = "manual") -> str:
+        out = await bot._apply_action(actor=actor, action="resume", value="true", reason=reason)
+        return f"ok {out['result']} op_id={out['op_id']}"
+
+    async def handle_mode(actor: str, value: str, reason: str = "manual") -> str:
+        out = await bot._apply_action(actor=actor, action="mode", value=value, reason=reason)
+        return f"ok {out['result']} op_id={out['op_id']}"
+
+    async def handle_kill(actor: str, value: str, reason: str = "manual") -> str:
+        out = await bot._apply_action(actor=actor, action="kill_switch", value=value, reason=reason)
+        return f"ok {out['result']} op_id={out['op_id']}"
+
+    async def handle_chain(actor: str, value: str, reason: str = "manual") -> str:
+        out = await bot._apply_action(actor=actor, action="chain_set", value=value, reason=reason)
+        return f"ok {out['result']} op_id={out['op_id']}"
+
+    async def handle_ops(limit: int = 20) -> str:
+        resp = await bot._api_get("/operator/events", params={"limit": max(1, min(int(limit), 50))})
+        rows = resp.get("items", []) if isinstance(resp, dict) else []
+        if not rows:
+            return "No operator actions found."
+        lines = []
+        for row in rows[:20]:
+            op_id = str(row.get("op_id", "—"))
+            action = str(row.get("action", "unknown"))
+            applied = bool(row.get("applied", False))
+            err = str(row.get("error", "") or "—")
+            ts = str(row.get("ts", "") or row.get("created_at", "") or "—")
+            lines.append(f"{ts} op_id={op_id} action={action} applied={applied} error={err}")
+        return "\n".join(lines)
+
+    async def _slash_exec(
+        interaction: discord.Interaction,
+        handler,
+        *,
+        ephemeral: bool = True,
+    ) -> None:
+        responded = False
+        cmd_name = interaction.command.name if interaction.command else "unknown"
+        try:
+            await interaction.response.defer(ephemeral=ephemeral)
+            responded = True
+            if bot.command_channel_id and interaction.channel_id != bot.command_channel_id:
+                await interaction.followup.send(
+                    "Operator commands are restricted to the configured command channel.",
+                    ephemeral=True,
+                )
+                log.info(
+                    "slash_denied command=%s user_id=%s channel_id=%s instance_id=%s",
+                    cmd_name,
+                    interaction.user.id if interaction.user else 0,
+                    interaction.channel_id,
+                    bot.instance_id,
+                )
+                return
+            result = await handler()
+            await interaction.followup.send(f"{result}\ninstance_id={bot.instance_id}", ephemeral=ephemeral)
+            log.info(
+                "slash_ok command=%s user_id=%s channel_id=%s instance_id=%s responded=true",
+                cmd_name,
+                interaction.user.id if interaction.user else 0,
+                interaction.channel_id,
+                bot.instance_id,
+            )
+        except Exception as e:
+            log.exception(
+                "slash_error command=%s user_id=%s channel_id=%s instance_id=%s",
+                cmd_name,
+                interaction.user.id if interaction.user else 0,
+                interaction.channel_id,
+                bot.instance_id,
+            )
+            msg = f"Command failed: {e}"
+            if responded:
+                with contextlib.suppress(Exception):
+                    await interaction.followup.send(msg, ephemeral=True)
+            else:
+                with contextlib.suppress(Exception):
+                    await interaction.response.send_message(msg, ephemeral=True)
+
     @bot.command(name="status")
     async def status_cmd(ctx: commands.Context):
         if not await bot._check_channel(ctx):
             return
-        text, _ = await bot._status_payload()
-        await ctx.reply(text)
+        await ctx.reply(await handle_status())
 
     @bot.command(name="pause")
     async def pause_cmd(ctx: commands.Context, *, reason: str = "manual"):
         if not await bot._check_channel(ctx):
             return
-        out = await bot._apply_action(actor=str(ctx.author), action="pause", value="true", reason=reason)
-        await ctx.reply(f"ok {out}")
+        await ctx.reply(await handle_pause(actor=str(ctx.author), reason=reason))
 
     @bot.command(name="resume")
     async def resume_cmd(ctx: commands.Context, *, reason: str = "manual"):
         if not await bot._check_channel(ctx):
             return
-        out = await bot._apply_action(actor=str(ctx.author), action="resume", value="true", reason=reason)
-        await ctx.reply(f"ok {out}")
+        await ctx.reply(await handle_resume(actor=str(ctx.author), reason=reason))
 
     @bot.command(name="mode")
     async def mode_cmd(ctx: commands.Context, value: str, *, reason: str = "manual"):
@@ -394,8 +664,7 @@ def _build_bot() -> OperatorBot:
             code = bot._new_confirm(user_id=ctx.author.id, action="mode", value=value, reason=reason)
             await ctx.reply(f"dangerous action pending: mode={value}. confirm with `!confirm {code}` within {bot.confirm_ttl_s}s")
             return
-        out = await bot._apply_action(actor=str(ctx.author), action="mode", value=value, reason=reason)
-        await ctx.reply(f"ok {out}")
+        await ctx.reply(await handle_mode(actor=str(ctx.author), value=value, reason=reason))
 
     @bot.command(name="kill-switch")
     async def kill_switch_cmd(ctx: commands.Context, value: str, *, reason: str = "manual"):
@@ -405,8 +674,7 @@ def _build_bot() -> OperatorBot:
             code = bot._new_confirm(user_id=ctx.author.id, action="kill_switch", value=value, reason=reason)
             await ctx.reply(f"dangerous action pending: kill-switch {value}. confirm with `!confirm {code}` within {bot.confirm_ttl_s}s")
             return
-        out = await bot._apply_action(actor=str(ctx.author), action="kill_switch", value=value, reason=reason)
-        await ctx.reply(f"ok {out}")
+        await ctx.reply(await handle_kill(actor=str(ctx.author), value=value, reason=reason))
 
     @bot.command(name="confirm")
     async def confirm_cmd(ctx: commands.Context, code: str):
@@ -422,7 +690,7 @@ def _build_bot() -> OperatorBot:
             value=item.value,
             reason=f"confirmed:{item.reason}",
         )
-        await ctx.reply(f"confirmed ok {out}")
+        await ctx.reply(f"confirmed ok {out['result']} op_id={out['op_id']}")
 
     @bot.command(name="chain")
     async def chain_cmd(ctx: commands.Context, subcmd: str, value: str, *, reason: str = "manual"):
@@ -432,10 +700,56 @@ def _build_bot() -> OperatorBot:
             await ctx.reply("usage: !chain set EVM:sepolia|SOL:solana <reason>")
             return
         try:
-            out = await bot._apply_action(actor=str(ctx.author), action="chain_set", value=value, reason=reason)
-            await ctx.reply(f"ok {out}")
+            await ctx.reply(await handle_chain(actor=str(ctx.author), value=value, reason=reason))
         except Exception as e:
             await ctx.reply(f"error chain switch failed: {e}")
+
+    @bot.command(name="ops")
+    async def ops_cmd(ctx: commands.Context):
+        if not await bot._check_channel(ctx):
+            return
+        await ctx.reply(await handle_ops(limit=20))
+
+    @bot.tree.command(name="status", description="Show operator status")
+    async def slash_status(interaction: discord.Interaction):
+        await _slash_exec(interaction, handle_status, ephemeral=True)
+
+    @bot.tree.command(name="pause", description="Pause trading")
+    async def slash_pause(interaction: discord.Interaction):
+        await _slash_exec(interaction, lambda: handle_pause(actor=str(interaction.user), reason="slash"), ephemeral=True)
+
+    @bot.tree.command(name="resume", description="Resume trading")
+    async def slash_resume(interaction: discord.Interaction):
+        await _slash_exec(interaction, lambda: handle_resume(actor=str(interaction.user), reason="slash"), ephemeral=True)
+
+    @bot.tree.command(name="mode", description="Set mode")
+    @app_commands.describe(value="paper, dryrun, or live")
+    async def slash_mode(interaction: discord.Interaction, value: str):
+        async def _handler() -> str:
+            if bot._is_dangerous("mode", value):
+                return f"dangerous action pending in prefix flow only. use !mode {value} and !confirm"
+            return await handle_mode(actor=str(interaction.user), value=value, reason="slash")
+        await _slash_exec(interaction, _handler, ephemeral=True)
+
+    @bot.tree.command(name="chain", description="Set chain selection, e.g. EVM:sepolia")
+    @app_commands.describe(value="Chain selection like EVM:sepolia")
+    async def slash_chain(interaction: discord.Interaction, value: str):
+        await _slash_exec(interaction, lambda: handle_chain(actor=str(interaction.user), value=value, reason="slash"), ephemeral=True)
+
+    @slash_chain.autocomplete("value")
+    async def slash_chain_autocomplete(interaction: discord.Interaction, current: str):
+        choices = await _chain_choices(current)
+        return [app_commands.Choice(name=v, value=v) for v in choices]
+
+    @bot.tree.command(name="ops", description="Show last 20 operator actions")
+    async def slash_ops(interaction: discord.Interaction):
+        await _slash_exec(interaction, lambda: handle_ops(limit=20), ephemeral=True)
+
+    @bot.tree.command(name="ping", description="Operator bot health ping")
+    async def slash_ping(interaction: discord.Interaction):
+        async def _handler() -> str:
+            return f"pong instance_id={bot.instance_id} api_base={bot.api_base} sync={bot.sync_mode}"
+        await _slash_exec(interaction, _handler, ephemeral=True)
 
     return bot
 
@@ -446,6 +760,12 @@ def main() -> None:
     if not token:
         raise SystemExit("DISCORD_OPERATOR_TOKEN is required for discord operator bot")
     bot = _build_bot()
+    log.info(
+        "operator starting operator_impl=%s instance_id=%s api_base=%s",
+        bot.operator_impl,
+        bot.instance_id,
+        bot.api_base,
+    )
     bot.run(token)
 
 

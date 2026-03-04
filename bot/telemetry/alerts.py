@@ -3,6 +3,9 @@ import asyncio, os, time
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 import httpx
+import logging
+
+log = logging.getLogger("alerts")
 
 @dataclass
 class AlertCfg:
@@ -16,6 +19,11 @@ class AlertManager:
         self.cfg = cfg
         self._last_sent: Dict[str, float] = {}
         self._client = httpx.AsyncClient(timeout=5.0)
+        webhook = str(self.cfg.webhook or "").strip()
+        self._webhook_enabled = bool(webhook)
+        if not self._webhook_enabled:
+            self.cfg.enabled = False
+            log.info("webhook_disabled")
 
     def _should_send(self, key: str, cooldown_s: Optional[int]) -> bool:
         if not self.cfg.enabled: return False
@@ -28,6 +36,8 @@ class AlertManager:
         return False
 
     async def _post(self, payload: Dict[str, Any]) -> None:
+        if not self._webhook_enabled:
+            return
         try:
             await self._client.post(self.cfg.webhook, json=payload)
         except Exception:

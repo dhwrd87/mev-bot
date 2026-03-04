@@ -1,15 +1,15 @@
 {
   "id": null,
-  "uid": "strategy-analytics",
-  "title": "20 Strategy Analytics",
-  "schemaVersion": 39,
-  "version": 3,
-  "timezone": "browser",
-  "refresh": "30s",
+  "title": "90 Infra",
+  "uid": "infra-overview",
   "tags": [
     "canonical",
-    "strategy"
+    "infra"
   ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
   "templating": {
     "list": [
       {
@@ -108,99 +108,20 @@
   },
   "panels": [
     {
-      "type": "table",
-      "title": "PnL by Strategy/DEX/Chain",
+      "type": "stat",
+      "title": "Prometheus Up",
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 24,
-        "h": 7
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "table",
-          "expr": "sum by (strategy, chain) (mevbot_pnl_realized_usd{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\"})"
-        }
-      ]
-    },
-    {
-      "type": "heatmap",
-      "title": "Edge Histogram (if available)",
-      "gridPos": {
-        "x": 0,
-        "y": 7,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "heatmap",
-          "expr": "sum by (le) (rate(mevbot_edge_bps_bucket{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\"}[10m])) or vector(0)"
-        }
-      ]
-    },
-    {
-      "type": "heatmap",
-      "title": "Slippage Histogram (if available)",
-      "gridPos": {
-        "x": 12,
-        "y": 7,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "heatmap",
-          "expr": "sum by (le) (rate(mevbot_slippage_bps_bucket{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\"}[10m])) or vector(0)"
-        }
-      ]
-    },
-    {
-      "type": "bargauge",
-      "title": "Filter Reason Pareto (24h)",
-      "gridPos": {
-        "x": 0,
-        "y": 15,
-        "w": 24,
-        "h": 7
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "topk(12, sum by (reason) (increase(mevbot_sim_fail_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\"}[24h])))",
-          "legendFormat": "sim_fail {{reason}}"
-        },
-        {
-          "refId": "B",
-          "expr": "topk(12, sum by (reason) (increase(mevbot_tx_revert_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[24h])))",
-          "legendFormat": "revert {{reason}}"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "Exporter Live (s)",
-      "gridPos": {
-        "x": 0,
-        "y": 22,
         "w": 6,
-        "h": 4
+        "h": 5
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\",provider=~\"$provider\"}) or vector(0)"
+          "expr": "max(up{job=\"prometheus\"}) or vector(0)"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "decimals": 1
-        }
-      },
       "options": {
         "reduceOptions": {
           "calcs": [
@@ -212,11 +133,115 @@
     },
     {
       "type": "stat",
+      "title": "mev-bot Target Up",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(up{job=\"mev-bot\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Redis Target Up",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(up{job=~\".*redis.*\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Postgres Target Up",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(up{job=~\".*postgres.*|.*postgre.*\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Prometheus Targets Up by Job",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (job) (up)"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Scrape Duration by Job (s)",
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (job) (scrape_duration_seconds)"
+        }
+      ]
+    },
+    {
+      "type": "stat",
       "title": "Metrics Present (mevbot_*)",
       "gridPos": {
         "x": 0,
-        "y": 16,
-        "w": 6,
+        "y": 11,
+        "w": 8,
         "h": 5
       },
       "targets": [
@@ -225,6 +250,35 @@
           "expr": "count({__name__=~\"mevbot_.*\"}) or vector(0)"
         }
       ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Exporter Live (s)",
+      "gridPos": {
+        "x": 8,
+        "y": 11,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\",provider=~\"$provider\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
       "options": {
         "reduceOptions": {
           "calcs": [

@@ -1,15 +1,14 @@
 {
   "id": null,
   "uid": "operator-overview",
-  "title": "Operator Overview",
+  "title": "00 Operator Overview",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "timezone": "browser",
-  "refresh": "10s",
+  "refresh": "30s",
   "tags": [
-    "operator",
-    "mevbot",
-    "golden"
+    "canonical",
+    "operator"
   ],
   "templating": {
     "list": [
@@ -220,7 +219,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"})"
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",strategy=~\"$strategy\",dex=~\"$dex\",provider=~\"$provider\"}) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -401,6 +400,30 @@
           "legendFormat": "{{mode}}/{{outcome}}"
         }
       ]
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present (mevbot_*)",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count({__name__=~\"mevbot_.*\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
     }
   ]
 }

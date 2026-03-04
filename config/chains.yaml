@@ -1,6 +1,7 @@
 {
   "chains": {
     "sepolia": {
+      "family": "evm",
       "chain_id": 11155111,
       "default_rpc_http": "https://ethereum-sepolia-rpc.publicnode.com",
       "default_rpc_http_backups": [
@@ -16,6 +17,7 @@
       "native_symbol": "ETH"
     },
     "amoy": {
+      "family": "evm",
       "chain_id": 80002,
       "default_rpc_http": "https://polygon-amoy-bor-rpc.publicnode.com",
       "default_rpc_http_backups": [
@@ -28,6 +30,7 @@
       "native_symbol": "POL"
     },
     "mainnet": {
+      "family": "evm",
       "chain_id": 1,
       "default_rpc_http": "https://ethereum-rpc.publicnode.com",
       "default_rpc_http_backups": [
@@ -43,6 +46,7 @@
       "native_symbol": "ETH"
     },
     "base": {
+      "family": "evm",
       "chain_id": 8453,
       "default_rpc_http": "https://base-rpc.publicnode.com",
       "default_rpc_http_backups": [
@@ -55,6 +59,7 @@
       "native_symbol": "ETH"
     },
     "berachain": {
+      "family": "evm",
       "chain_id": 80094,
       "default_rpc_http": "https://rpc.berachain.com",
       "default_rpc_http_backups": [],
@@ -65,6 +70,7 @@
       "native_symbol": "BERA"
     },
     "polygon": {
+      "family": "evm",
       "chain_id": 137,
       "default_rpc_http": "https://polygon-bor-rpc.publicnode.com",
       "default_rpc_http_backups": [
@@ -77,6 +83,7 @@
       "native_symbol": "POL"
     },
     "solana": {
+      "family": "sol",
       "chain_id": 0,
       "default_rpc_http": "https://api.mainnet-beta.solana.com",
       "default_rpc_http_backups": [],
@@ -84,6 +91,17 @@
         "wss://api.mainnet-beta.solana.com"
       ],
       "explorer_base_url": "https://explorer.solana.com",
+      "native_symbol": "SOL"
+    },
+    "solana-devnet": {
+      "family": "sol",
+      "chain_id": 0,
+      "default_rpc_http": "https://api.devnet.solana.com",
+      "default_rpc_http_backups": [],
+      "default_ws_endpoints": [
+        "wss://api.devnet.solana.com"
+      ],
+      "explorer_base_url": "https://explorer.solana.com/?cluster=devnet",
       "native_symbol": "SOL"
     }
   }

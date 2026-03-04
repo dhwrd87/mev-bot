@@ -11,6 +11,8 @@ _CHAIN_ALIASES = {
     "sol": "solana",
     "sol-mainnet": "solana",
     "sol-mainnet-beta": "solana",
+    "solana-devnet": "solana-devnet",
+    "sol-devnet": "solana-devnet",
     "base-mainnet": "base",
     "arbitrum-mainnet": "arbitrum",
     "optimism-mainnet": "optimism",
@@ -55,7 +57,7 @@ def canonicalize_chain(chain: str | None) -> str:
 
 def canonicalize_family(family: str | None, chain: str | None = None) -> str:
     c = canonicalize_chain(chain)
-    if c == "solana":
+    if c == "solana" or c.startswith("solana-"):
         return "sol"
     if c in _KNOWN_EVM_CHAINS:
         return "evm"
@@ -77,6 +79,8 @@ def infer_network(chain: str | None, network: str | None = None) -> str:
         return env_override
 
     c = canonicalize_chain(chain)
+    if c.endswith("-devnet"):
+        return "devnet"
     if c in {"sepolia"}:
         return "testnet"
     if c in {"polygon"} and _norm(chain, default="").find("amoy") >= 0:

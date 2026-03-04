@@ -183,7 +183,7 @@ This is a standalone operator bot and does not modify trading code paths.
 
 ### Run locally
 ```bash
-python -m ops.discord_operator
+python -m bot.ops.discord_operator
 ```
 
 ### Run in docker (example)
@@ -194,13 +194,13 @@ docker compose run --rm \
   -e DISCORD_OPERATOR_AUDIT_CHANNEL_ID \
   -e DISCORD_OPERATOR_STATUS_CHANNEL_ID \
   -e DISCORD_OPERATOR_STATUS_REFRESH_S=45 \
-  mev-bot python -m ops.discord_operator
+  mev-bot python -m bot.ops.discord_operator
 ```
 
 Using the compose service:
 ```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml --env-file .env.runtime up -d operator
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml --env-file .env.runtime logs -f operator
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml --env-file .env.runtime --profile ops up -d discord-operator
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml --env-file .env.runtime logs -f discord-operator
 ```
 
 ### Commands (command channel only)

@@ -1,6 +1,8 @@
 import os, time, asyncio, logging, contextlib
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from urllib.parse import urlparse
+from pathlib import Path
+import json
 from fastapi import FastAPI, HTTPException
 from web3 import Web3, HTTPProvider
 import requests
@@ -19,6 +21,8 @@ from bot.core.invariants import get_runtime_invariants
 from bot.core.operator_control import get_operator_state
 from bot.core.canonical_chain import canonicalize_chain_target
 from bot.core.canonical_chain import canonicalize_labels
+from bot.core.switch_controller import SwitchController
+from bot.core.sol_runtime import SolSlotTracker
 from adapters.dex_packs.registry import DEXPackRegistry
 from bot.core.router import TradeRouter
 from bot.core.types_dex import TradeIntent
@@ -50,6 +54,7 @@ app.add_api_route("/metrics/", metrics_endpoint, methods=["GET"])
 app.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
 
 _monitor: Optional[WSMempoolMonitor] = None
+_sol_tracker: Optional[SolSlotTracker] = None
 _runtime_monitor_task: Optional[asyncio.Task] = None
 _health_snapshot_writer: Optional[HealthSnapshotWriter] = None
 _dex_registry: Optional[DEXPackRegistry] = None
@@ -102,6 +107,58 @@ def _ensure_ops_state_table(conn) -> None:
         ON CONFLICT (k) DO NOTHING
         """
     )
+    conn.execute(
+        """
+        INSERT INTO ops_state(k, v)
+        VALUES ('mode', 'paper')
+        ON CONFLICT (k) DO NOTHING
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO ops_state(k, v)
+        VALUES ('kill_switch', 'false')
+        ON CONFLICT (k) DO NOTHING
+        """
+    )
+    default_chain = str(os.getenv("CHAIN", "sepolia")).strip().lower() or "sepolia"
+    conn.execute(
+        """
+        INSERT INTO ops_state(k, v)
+        VALUES ('chain_selection', %s)
+        ON CONFLICT (k) DO NOTHING
+        """,
+        (f"EVM:{default_chain}",),
+    )
+
+
+def _ensure_operator_events_table(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operator_events(
+          op_id TEXT PRIMARY KEY,
+          ts TIMESTAMPTZ DEFAULT now(),
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL,
+          value TEXT,
+          reason TEXT,
+          applied BOOLEAN NOT NULL DEFAULT false,
+          error TEXT,
+          desired_state TEXT,
+          desired_mode TEXT,
+          desired_chain TEXT,
+          effective_state TEXT,
+          effective_chain TEXT,
+          created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_operator_events_created_at
+          ON operator_events(created_at DESC)
+        """
+    )
 
 
 def _db_connect():
@@ -142,6 +199,129 @@ def _write_paused_flag(value: bool) -> None:
             """,
             ("true" if value else "false",),
         )
+
+
+def _read_ops_state_values() -> Dict[str, str]:
+    try:
+        with _db_connect() as conn:
+            _ensure_ops_state_table(conn)
+            rows = conn.execute("SELECT k, v FROM ops_state").fetchall()
+            out: Dict[str, str] = {}
+            for r in rows:
+                out[str(r[0])] = str(r[1])
+            return out
+    except Exception as e:
+        log.warning("failed reading ops_state values: %s", e)
+        return {}
+
+
+def _read_ops_value(key: str, default: str) -> str:
+    raw = _read_ops_state_values()
+    v = str(raw.get(key, default) or "").strip()
+    return v if v else default
+
+
+def _effective_chain_key() -> str:
+    cfg = _get_chain_snapshot()
+    fam = str(os.getenv("CHAIN_FAMILY", "evm")).strip().upper() or "EVM"
+    return f"{fam}:{str(cfg.get('chain', 'unknown')).strip().lower()}"
+
+
+def _mask_url(url: str) -> str:
+    s = str(url or "").strip()
+    if not s:
+        return ""
+    try:
+        p = urlparse(s)
+        if p.scheme and p.hostname:
+            return f"{p.scheme}://{p.hostname}"
+    except Exception:
+        return s
+    return s
+
+
+def _set_chain_scoped_stream_env(*, family: str, chain: str) -> str:
+    chain_key = f"{str(family).strip().lower()}:{str(chain).strip().lower()}"
+    stream_key = f"mempool:{chain_key}:pending:txs"
+    os.environ["REDIS_STREAM"] = stream_key
+    os.environ["MEMPOOL_STREAM"] = stream_key
+    os.environ["CANDIDATES_STREAM_PREFIX"] = f"candidates:{chain_key}"
+    return stream_key
+
+
+def _supported_families() -> set[str]:
+    raw = str(os.getenv("SUPPORTED_FAMILIES", "evm")).strip().lower()
+    vals = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    out = {v for v in vals if v in {"evm", "sol"}}
+    return out or {"evm"}
+
+
+def _load_chain_registry() -> Dict[str, Dict[str, Any]]:
+    p = Path(os.getenv("CHAINS_CONFIG_PATH", str(Path(__file__).resolve().parents[2] / "config" / "chains.yaml")))
+    if not p.exists():
+        return {}
+    raw = json.loads(p.read_text())
+    chains = raw.get("chains", {})
+    if not isinstance(chains, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, v in chains.items():
+        if not isinstance(v, dict):
+            continue
+        out[str(k).strip().lower()] = dict(v)
+    return out
+
+
+def _effective_state_payload() -> Dict[str, Any]:
+    cfg = _get_chain_snapshot()
+    sm = getattr(app.state, "bot_state_machine", None)
+    effective_state = sm.state.value if sm else ("PAUSED" if bool(getattr(app.state, "paused", False)) else "READY")
+    return {
+        "effective_state": effective_state,
+        "effective_chain": str(cfg.get("chain", "unknown")),
+        "resolved_chain_id": int(cfg.get("chain_id", 0) or 0),
+        "rpc_url": str(cfg.get("rpc_http_selected", "") or ""),
+        "head": int(getattr(app.state, "_chain_obs_last_head", 0) or 0),
+        "slot": int(getattr(app.state, "_chain_obs_last_slot", 0) or 0),
+        "lag_blocks": int(getattr(app.state, "_chain_obs_max_head", 0) or 0) - int(getattr(app.state, "_chain_obs_last_head", 0) or 0),
+        "lag_slots": int(getattr(app.state, "_chain_obs_max_slot", 0) or 0) - int(getattr(app.state, "_chain_obs_last_slot", 0) or 0),
+    }
+
+
+def _last_operator_event_fields() -> Dict[str, Any]:
+    try:
+        with _db_connect() as conn:
+            _ensure_operator_events_table(conn)
+            applied = conn.execute(
+                """
+                SELECT op_id
+                FROM operator_events
+                WHERE applied IS TRUE
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            failed = conn.execute(
+                """
+                SELECT op_id, error
+                FROM operator_events
+                WHERE (applied IS FALSE OR error IS NOT NULL)
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            return {
+                "last_op_id_applied": str(applied[0]) if applied else None,
+                "last_op_apply_error": str(failed[1]) if failed and failed[1] else None,
+                "last_op_error_id": str(failed[0]) if failed else None,
+            }
+    except Exception as e:
+        log.warning("failed reading operator_events summary: %s", e)
+        return {
+            "last_op_id_applied": None,
+            "last_op_apply_error": f"operator_events_read_failed:{e}",
+            "last_op_error_id": None,
+        }
 
 
 def _get_chain_snapshot() -> dict:
@@ -254,16 +434,21 @@ def _transition_state(
 
 
 async def _reload_chain_runtime(selection_name: str) -> dict:
-    global _monitor
+    global _monitor, _sol_tracker
 
     sel = parse_chain_selection(selection_name)
     os.environ["CHAIN_FAMILY"] = sel.family.lower()
     os.environ["CHAIN"] = sel.chain
+    chain_key = f"{sel.family.lower()}:{sel.chain}"
+    stream_key = _set_chain_scoped_stream_env(family=sel.family, chain=sel.chain)
     _reset_chain_config_cache_for_tests()
 
     if _monitor:
         await _monitor.stop()
         _monitor = None
+    if _sol_tracker:
+        await _sol_tracker.stop()
+        _sol_tracker = None
 
     if sel.family == "EVM":
         cfg = get_chain_config()
@@ -273,26 +458,44 @@ async def _reload_chain_runtime(selection_name: str) -> dict:
             _monitor = WSMempoolMonitor(
                 endpoints=cfg.ws_endpoints_selected,
                 metrics_port=None,
-                redis_stream=os.getenv("REDIS_STREAM", "mempool:pending:txs"),
+                redis_stream=stream_key,
                 redis_url=os.getenv("REDIS_URL", "redis://mev-redis:6379/0"),
             )
             asyncio.create_task(_monitor.start())
         return {
             "family": sel.family,
             "chain": cfg.chain,
+            "chain_key": chain_key,
             "chain_id": cfg.chain_id,
             "rpc_http_selected": cfg.rpc_http_selected,
             "ws_endpoints_selected": cfg.ws_endpoints_selected,
+            "redis_stream": stream_key,
         }
 
     # SOL-family runtime support is intentionally limited to config/env selection.
     app.state.w3 = None
+    sol_endpoint = str(os.getenv("SOL_RPC_HTTP", "")).strip()
+    if not sol_endpoint:
+        try:
+            cfg = get_chain_config()
+            sol_endpoint = str(cfg.rpc_http_selected or "").strip()
+        except Exception:
+            sol_endpoint = ""
+    if sol_endpoint:
+        _sol_tracker = SolSlotTracker(
+            endpoint=sol_endpoint,
+            on_slot=_on_sol_slot,
+            poll_s=float(os.getenv("SOL_SLOT_POLL_S", "2.0")),
+        )
+        await _sol_tracker.start()
     return {
         "family": sel.family,
         "chain": sel.chain,
+        "chain_key": chain_key,
         "chain_id": int(os.getenv("CHAIN_ID", "0") or "0"),
-        "rpc_http_selected": str(os.getenv("SOL_RPC_HTTP", "")).strip(),
+        "rpc_http_selected": sol_endpoint,
         "ws_endpoints_selected": [],
+        "redis_stream": stream_key,
     }
 
 
@@ -301,7 +504,7 @@ def _emit_chain_switch_labels_now(*, state: BotState, mode: str) -> None:
     family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
     chain = str(cfg.get("chain", "unknown")).strip().lower() or "unknown"
     set_runtime_bot_state(family=family, chain=chain, state=state.value)
-    set_heartbeat(family=family, chain=chain, unix_ts=time.time())
+    set_heartbeat(family=family, chain=chain, unix_ts=time.time(), strategy="default", dex="unknown", provider="unknown")
     if _health_snapshot_writer is not None:
         _health_snapshot_writer.maybe_write(
             family=family,
@@ -415,6 +618,8 @@ async def _startup():
     app.state.dex_router = _dex_router
     app.state._dex_overrides_sig = None
     app.state._dex_enabled = []
+    app.state.switch_controller = SwitchController()
+    app.state.switch_controller.effective_chain = _effective_chain_key()
 
     missing = missing_required_env()
     if missing:
@@ -422,6 +627,10 @@ async def _startup():
 
     # Validate full settings (will raise SystemExit on invalid config)
     app.state.settings = get_settings()
+    _set_chain_scoped_stream_env(
+        family=str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm",
+        chain=str(os.getenv("CHAIN", "sepolia")).strip().lower() or "sepolia",
+    )
 
     app.state.alerts = AlertManager(AlertCfg(
         webhook=os.getenv("DISCORD_WEBHOOK",""),
@@ -436,8 +645,9 @@ async def _startup():
         logging.warning("[startup] cannot connect to RPC %s", rpc)
 
     endpoints = _ws_env_endpoints()
-    global _monitor
-    if endpoints:
+    global _monitor, _sol_tracker
+    family_now = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
+    if family_now == "evm" and endpoints:
         _monitor = WSMempoolMonitor(
             endpoints=endpoints,
             metrics_port=None,
@@ -446,8 +656,18 @@ async def _startup():
         )
         asyncio.create_task(_monitor.start())
         logging.info("WSMempoolMonitor starting: chain=%s endpoints=%s", get_chain_config().chain, endpoints)
-    else:
+    elif family_now == "evm":
         logging.warning("No WS_POLYGON_* endpoints set; mempool monitor not started.")
+    else:
+        sol_endpoint = str(get_chain_config().rpc_http_selected).strip()
+        if sol_endpoint:
+            _sol_tracker = SolSlotTracker(
+                endpoint=sol_endpoint,
+                on_slot=_on_sol_slot,
+                poll_s=float(os.getenv("SOL_SLOT_POLL_S", "2.0")),
+            )
+            await _sol_tracker.start()
+            logging.info("SolSlotTracker started: chain=%s endpoint=%s", get_chain_config().chain, sol_endpoint)
 
     app.state.paused = _read_paused_flag()
     logging.info("Loaded paused flag from DB: %s", app.state.paused)
@@ -477,6 +697,10 @@ async def _shutdown():
         _runtime_monitor_task = None
     if _monitor:
         await _monitor.stop()
+    global _sol_tracker
+    if _sol_tracker:
+        await _sol_tracker.stop()
+        _sol_tracker = None
     stream_obs_redis = getattr(app.state, "_stream_obs_redis", None)
     if stream_obs_redis is not None:
         with contextlib.suppress(Exception):
@@ -494,7 +718,22 @@ async def _runtime_monitor_loop() -> None:
             await _observe_chain_progress()
             await _observe_stream_progress()
             op_state = get_operator_state()
-            await _maybe_apply_chain_target(str(op_state.get("chain_target", "UNKNOWN")))
+            desired_chain = canonicalize_chain_target(
+                _read_ops_value("chain_selection", _effective_chain_key())
+            )
+            ctrl = getattr(app.state, "switch_controller", None)
+            if ctrl is not None:
+                ctrl.desired_chain = desired_chain
+                ctrl.effective_chain = _effective_chain_key()
+                try:
+                    await ctrl.reconcile(
+                        desired_chain=desired_chain,
+                        effective_chain=_effective_chain_key(),
+                        apply_fn=_apply_chain_target_once,
+                        validate_fn=_validate_chain_switch,
+                    )
+                except Exception as e:
+                    log.warning("chain switch reconcile failed desired=%s err=%s", desired_chain, e)
             await _maybe_reload_dex_router(op_state)
             inv = get_runtime_invariants()
             target_state, reason = inv.evaluate(operator_state=op_state)
@@ -581,6 +820,30 @@ def _sol_get_slot(endpoint: str) -> int:
     return int(body.get("result") or 0)
 
 
+async def _on_sol_slot(slot: int, endpoint: str) -> None:
+    cfg = _get_chain_snapshot()
+    family = str(os.getenv("CHAIN_FAMILY", "sol")).strip().lower() or "sol"
+    chain = str(cfg.get("chain", "solana-devnet")).strip().lower() or "solana-devnet"
+    provider = _provider_name(endpoint)
+    max_seen = int(getattr(app.state, "_chain_obs_max_slot", slot) or slot)
+    max_seen = max(max_seen, int(slot))
+    app.state._chain_obs_max_slot = max_seen
+    app.state._chain_obs_last_slot = int(slot)
+    app.state._chain_obs_last_advance_ts = time.time()
+    set_chain_slot(family=family, chain=chain, provider=provider, slot=int(slot))
+    set_slot_lag(family=family, chain=chain, provider=provider, lag=max(0, max_seen - int(slot)))
+    set_chain_head(family=family, chain=chain, provider=provider, height=0)
+    set_head_lag(family=family, chain=chain, provider=provider, blocks=0)
+    set_heartbeat(
+        family=family,
+        chain=chain,
+        unix_ts=time.time(),
+        provider=provider,
+        strategy="default",
+        dex="unknown",
+    )
+
+
 async def _observe_chain_progress() -> None:
     cfg = _get_chain_snapshot()
     family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
@@ -588,7 +851,14 @@ async def _observe_chain_progress() -> None:
     provider = _provider_name(str(cfg.get("rpc_http_selected", "")))
     now = time.time()
 
-    set_heartbeat(family=family, chain=chain, unix_ts=now)
+    set_heartbeat(
+        family=family,
+        chain=chain,
+        unix_ts=now,
+        provider=provider,
+        strategy="default",
+        dex="unknown",
+    )
 
     # Gate expensive RPC polling to a configurable cadence.
     obs_interval_s = max(2.0, float(os.getenv("CHAIN_OBSERVE_INTERVAL_S", "10")))
@@ -640,6 +910,14 @@ async def _observe_chain_progress() -> None:
                 provider=provider_for_head,
                 blocks=max(0, max_seen - head),
             )
+            set_heartbeat(
+                family=family,
+                chain=chain,
+                unix_ts=now,
+                provider=provider_for_head,
+                strategy="default",
+                dex="unknown",
+            )
             # Slot metric is not meaningful for EVM chains.
             set_chain_slot(family=family, chain=chain, provider=provider_for_head, slot=0)
             set_slot_lag(family=family, chain=chain, provider=provider_for_head, lag=0)
@@ -650,6 +928,9 @@ async def _observe_chain_progress() -> None:
         return
 
     if family == "sol":
+        global _sol_tracker
+        if _sol_tracker is not None and int(getattr(_sol_tracker, "current_slot", 0) or 0) > 0:
+            return
         endpoint = str(cfg.get("rpc_http_selected", "")).strip()
         if not endpoint:
             return
@@ -665,6 +946,14 @@ async def _observe_chain_progress() -> None:
             # Head metric is not meaningful for slot-based chains.
             set_chain_head(family=family, chain=chain, provider=provider, height=0)
             set_head_lag(family=family, chain=chain, provider=provider, blocks=0)
+            set_heartbeat(
+                family=family,
+                chain=chain,
+                unix_ts=now,
+                provider=provider,
+                strategy="default",
+                dex="unknown",
+            )
             if prev is None or slot > int(prev):
                 app.state._chain_obs_last_advance_ts = now
         except Exception as e:
@@ -690,16 +979,16 @@ async def _observe_stream_progress() -> None:
         log.debug("stream observe failed: %s", e)
 
 
-async def _maybe_apply_chain_target(chain_target: str) -> None:
-    target = canonicalize_chain_target(chain_target)
+async def _apply_chain_target_once(target: str) -> None:
+    target = canonicalize_chain_target(target)
     if target == "UNKNOWN":
-        return
-    last_target = str(getattr(app.state, "_last_chain_target", "") or "")
-    if last_target == target:
-        return
-
+        raise RuntimeError("invalid desired chain target")
     old_chain = _get_chain_snapshot().get("chain", "unknown")
     try:
+        ctrl = getattr(app.state, "switch_controller", None)
+        if ctrl is not None:
+            ctrl.switching_in_progress = True
+            ctrl.last_transition_error = None
         app.state._chain_switch_ready_hold_target = ""
         _transition_state(BotState.PAUSED, actor="system", reason=f"chain_switch_pause:{target}", force=True)
         _transition_state(BotState.SYNCING, actor="system", reason=f"chain_switch_syncing:{target}", force=True)
@@ -709,7 +998,6 @@ async def _maybe_apply_chain_target(chain_target: str) -> None:
         )
         await _reload_chain_runtime(target)
         sel = parse_chain_selection(target)
-        val = await asyncio.to_thread(validate_chain_selection, sel)
         dex_validation = await asyncio.to_thread(
             _validate_dex_profiles_for_chain,
             family=sel.family.lower(),
@@ -732,20 +1020,81 @@ async def _maybe_apply_chain_target(chain_target: str) -> None:
         app.state._chain_switch_ready_hold_target = target
         app.state._last_chain_target = target
         log.info(
-            "chain_switch_validation old=%s new=%s result=ok endpoint=%s wallet=%s balance=%s dex_validated=%s dex_warm_ok=%s",
+            "chain_switch_apply old=%s new=%s result=ok dex_validated=%s dex_warm_ok=%s stream=%s",
             old_chain,
             target,
-            str(val.get("endpoint", "")),
-            str(val.get("wallet", "")),
-            str(val.get("balance", "")),
             int(dex_validation.get("validated", 0)),
             int(warm_result.get("ok_count", 0)),
+            str(os.getenv("REDIS_STREAM", "")),
         )
     except Exception as e:
         _transition_state(BotState.DEGRADED, actor="system", reason=f"chain_switch_failed:{target}", force=True)
         app.state._chain_switch_ready_hold_target = ""
         app.state._last_chain_target = target
+        ctrl = getattr(app.state, "switch_controller", None)
+        if ctrl is not None:
+            ctrl.last_transition_error = str(e)
         log.warning("chain_switch_validation old=%s new=%s result=fail error=%s", old_chain, target, e)
+        raise
+    finally:
+        ctrl = getattr(app.state, "switch_controller", None)
+        if ctrl is not None:
+            ctrl.switching_in_progress = False
+
+
+async def _validate_chain_switch(target: str) -> None:
+    sel = parse_chain_selection(target)
+    if sel.family == "EVM":
+        w3 = getattr(app.state, "w3", None)
+        if not w3:
+            raise RuntimeError("switch_validation_no_rpc_client")
+        start = time.time()
+        try:
+            h0 = int(await asyncio.to_thread(lambda: w3.eth.block_number))
+        except Exception as e:
+            raise RuntimeError(f"switch_validation_head_read_failed:{e}") from e
+        deadline = start + 15.0
+        last = h0
+        while time.time() < deadline:
+            await asyncio.sleep(1.5)
+            try:
+                h = int(await asyncio.to_thread(lambda: w3.eth.block_number))
+            except Exception:
+                continue
+            last = h
+            if h > h0:
+                app.state._chain_obs_last_advance_ts = time.time()
+                return
+        raise RuntimeError(f"switch_validation_head_not_advancing start={h0} last={last} timeout_s=15")
+
+    # SOL observe-only validation: slot must advance within 15s.
+    global _sol_tracker
+    endpoint = str(_get_chain_snapshot().get("rpc_http_selected", "")).strip()
+    if _sol_tracker is not None and int(getattr(_sol_tracker, "current_slot", 0) or 0) > 0:
+        s0 = int(getattr(_sol_tracker, "current_slot", 0) or 0)
+        deadline = time.time() + 15.0
+        last = s0
+        while time.time() < deadline:
+            await asyncio.sleep(1.0)
+            last = int(getattr(_sol_tracker, "current_slot", 0) or 0)
+            if last > s0:
+                return
+        raise RuntimeError(f"switch_validation_slot_not_advancing start={s0} last={last} timeout_s=15")
+    if not endpoint:
+        raise RuntimeError("switch_validation_no_sol_endpoint")
+    s0 = int(await asyncio.to_thread(_sol_get_slot, endpoint))
+    deadline = time.time() + 15.0
+    last = s0
+    while time.time() < deadline:
+        await asyncio.sleep(1.0)
+        try:
+            s = int(await asyncio.to_thread(_sol_get_slot, endpoint))
+        except Exception:
+            continue
+        last = s
+        if s > s0:
+            return
+    raise RuntimeError(f"switch_validation_slot_not_advancing start={s0} last={last} timeout_s=15")
 
 # ---- Health ----
 @app.get("/health")
@@ -772,6 +1121,185 @@ def health():
         "rpc_http": cfg["rpc_http_selected"],
         "paused": bool(getattr(app.state, "paused", False)),
         "state": state,
+    }
+
+
+@app.get("/operator/state")
+def operator_state():
+    raw = _read_ops_state_values()
+    paused = str(raw.get("paused", "false")).strip().lower() == "true"
+    kill_switch = str(raw.get("kill_switch", "false")).strip().lower() == "true"
+    mode = str(raw.get("mode", "paper")).strip().lower() or "paper"
+    chain_selection = str(raw.get("chain_selection", "")).strip()
+    if not chain_selection:
+        chain_selection = f"EVM:{str(os.getenv('CHAIN', 'sepolia')).strip().lower() or 'sepolia'}"
+    desired_chain = canonicalize_chain_target(chain_selection)
+    return {
+        "ok": True,
+        "desired_state": "PAUSED" if paused else "TRADING",
+        "desired_mode": mode,
+        "desired_chain": desired_chain,
+        "kill_switch": kill_switch,
+        "raw": raw,
+    }
+
+
+@app.get("/chains")
+def list_chains():
+    registry = _load_chain_registry()
+    supported = _supported_families()
+    items = []
+    for chain, cfg in sorted(registry.items()):
+        family = str(cfg.get("family", "evm")).strip().lower() or "evm"
+        if family not in {"evm", "sol"}:
+            family = "evm"
+        if family not in supported:
+            continue
+        key = f"{family.upper()}:{chain}"
+        items.append(
+            {
+                "key": key,
+                "family": family,
+                "chain": chain,
+                "chain_id": int(cfg.get("chain_id", 0) or 0),
+            }
+        )
+    return {"ok": True, "supported_families": sorted(supported), "items": items}
+
+
+@app.post("/operator/chain")
+def operator_set_chain(name: str):
+    try:
+        sel = parse_chain_selection(name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid chain selection: {e}") from e
+
+    family = sel.family.strip().lower()
+    supported = _supported_families()
+    if family not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported chain family '{family}'. supported_families={sorted(supported)}",
+        )
+
+    registry = _load_chain_registry()
+    cfg = registry.get(sel.chain)
+    if not cfg:
+        raise HTTPException(status_code=400, detail=f"unsupported chain '{sel.chain}'")
+    cfg_family = str(cfg.get("family", "evm")).strip().lower() or "evm"
+    if cfg_family != family:
+        raise HTTPException(
+            status_code=400,
+            detail=f"chain '{sel.chain}' family mismatch: requested={family} configured={cfg_family}",
+        )
+
+    chain_key = f"{sel.family}:{sel.chain}"
+    try:
+        with _db_connect() as conn:
+            _ensure_ops_state_table(conn)
+            conn.execute(
+                """
+                INSERT INTO ops_state(k, v, updated_at)
+                VALUES ('chain_selection', %s, now())
+                ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v, updated_at=now()
+                """,
+                (chain_key,),
+            )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"failed to persist desired chain: {e}") from e
+
+    return {"ok": True, "desired_chain": chain_key, "supported_families": sorted(supported)}
+
+
+@app.get("/operator/events")
+def operator_events(limit: int = 20):
+    safe_limit = max(1, min(int(limit), 200))
+    q = """
+    SELECT
+      op_id, ts, actor, action, value, reason, applied, error,
+      desired_state, desired_mode, desired_chain, effective_state, effective_chain, created_at
+    FROM operator_events
+    ORDER BY created_at DESC
+    LIMIT %s
+    """
+    try:
+        with _db_connect() as conn:
+            _ensure_operator_events_table(conn)
+            rows = conn.execute(q, (safe_limit,)).fetchall()
+            items = []
+            for r in rows:
+                items.append(
+                    {
+                        "op_id": str(r[0]),
+                        "ts": r[1].isoformat() if r[1] else None,
+                        "actor": r[2],
+                        "action": r[3],
+                        "value": r[4],
+                        "reason": r[5],
+                        "applied": bool(r[6]),
+                        "error": r[7],
+                        "desired_state": r[8],
+                        "desired_mode": r[9],
+                        "desired_chain": r[10],
+                        "effective_state": r[11],
+                        "effective_chain": r[12],
+                        "created_at": r[13].isoformat() if r[13] else None,
+                    }
+                )
+            return {"ok": True, "limit": safe_limit, "items": items}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"operator events query failed: {e}") from e
+
+
+@app.get("/status")
+def status():
+    desired = operator_state()
+    effective = _effective_state_payload()
+    cfg = _get_chain_snapshot()
+    ws_selected = cfg.get("ws_endpoints_selected", []) if isinstance(cfg, dict) else []
+    ws_primary = ws_selected[0] if isinstance(ws_selected, list) and ws_selected else ""
+    effective_chain_key = _effective_chain_key()
+    ctrl = getattr(app.state, "switch_controller", None)
+    ctrl_snap = ctrl.snapshot() if ctrl is not None else None
+    last = _last_operator_event_fields()
+    restart_required = str(desired.get("desired_chain", "")) != effective_chain_key
+    family_now = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
+    head_value = effective.get("head")
+    lag_blocks_value = max(0, int(effective.get("lag_blocks", 0) or 0))
+    slot_value = effective.get("slot")
+    lag_slots_value = max(0, int(effective.get("lag_slots", 0) or 0))
+    if family_now == "sol":
+        head_value = None
+        lag_blocks_value = None
+    else:
+        slot_value = None
+        lag_slots_value = None
+
+    return {
+        "ok": True,
+        "desired_state": desired.get("desired_state"),
+        "desired_mode": desired.get("desired_mode"),
+        "desired_chain": desired.get("desired_chain"),
+        "desired_family": str(desired.get("desired_chain", "UNKNOWN")).split(":", 1)[0].lower() if ":" in str(desired.get("desired_chain", "")) else None,
+        "kill_switch": desired.get("kill_switch"),
+        "effective_state": effective.get("effective_state"),
+        "effective_chain": effective_chain_key,
+        "effective_family": family_now,
+        "resolved_chain_id": effective.get("resolved_chain_id"),
+        "rpc_url": _mask_url(str(effective.get("rpc_url", ""))),
+        "ws_url": _mask_url(str(ws_primary)),
+        "head": head_value,
+        "slot": slot_value,
+        "lag_blocks": lag_blocks_value,
+        "lag_slots": lag_slots_value,
+        "mempool_stream": str(os.getenv("REDIS_STREAM", "mempool:pending:txs")),
+        "candidates_stream_prefix": str(os.getenv("CANDIDATES_STREAM_PREFIX", "candidates:default")),
+        "switching_in_progress": bool(ctrl_snap.switching_in_progress) if ctrl_snap else False,
+        "last_transition_error": ctrl_snap.last_transition_error if ctrl_snap else None,
+        "restart_required": bool(restart_required),
+        "last_op_id_applied": last.get("last_op_id_applied"),
+        "last_op_apply_error": last.get("last_op_apply_error"),
+        "last_op_error_id": last.get("last_op_error_id"),
     }
 
 @app.get("/debug/mempool")
