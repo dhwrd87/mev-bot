@@ -1,11 +1,13 @@
-import os, time, asyncio, logging, contextlib
+import os, time, asyncio, logging, contextlib, secrets
 from typing import Optional, List, Any, Dict
 from urllib.parse import urlparse
 from pathlib import Path
 import json
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from web3 import Web3, HTTPProvider
 import requests
+import aiohttp
 import redis.asyncio as aioredis
 
 from bot.api.metrics import metrics_endpoint
@@ -26,9 +28,11 @@ from bot.core.sol_runtime import SolSlotTracker
 from adapters.dex_packs.registry import DEXPackRegistry
 from bot.core.router import TradeRouter
 from bot.core.types_dex import TradeIntent
+from bot.net.instrumented_rpc import AsyncInstrumentedRpcClient
 from ops.metrics import (
     seed_default_series,
     set_runtime_bot_state,
+    set_desired_bot_state,
     start_metrics_http_server,
     set_heartbeat,
     set_chain_head,
@@ -56,9 +60,11 @@ app.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
 _monitor: Optional[WSMempoolMonitor] = None
 _sol_tracker: Optional[SolSlotTracker] = None
 _runtime_monitor_task: Optional[asyncio.Task] = None
+_rpc_ping_task: Optional[asyncio.Task] = None
 _health_snapshot_writer: Optional[HealthSnapshotWriter] = None
 _dex_registry: Optional[DEXPackRegistry] = None
 _dex_router: Optional[TradeRouter] = None
+_rpc_metrics_client: Optional[AsyncInstrumentedRpcClient] = None
 
 log = logging.getLogger(__name__)
 
@@ -324,6 +330,42 @@ def _last_operator_event_fields() -> Dict[str, Any]:
         }
 
 
+def _new_op_id() -> str:
+    return secrets.token_hex(12)
+
+
+def _base_operator_result(*, op_id: str, ok: bool, applied: bool, message: str) -> Dict[str, Any]:
+    s = status()
+    return {
+        "op_id": op_id,
+        "ok": bool(ok),
+        "applied": bool(applied),
+        "message": message,
+        "desired_state": s.get("desired_state"),
+        "effective_state": s.get("effective_state"),
+        "desired_chain": s.get("desired_chain"),
+        "effective_chain": s.get("effective_chain"),
+        "last_op_id_applied": s.get("last_op_id_applied"),
+        "last_op_apply_error": s.get("last_op_apply_error"),
+    }
+
+
+class KillSwitchPayload(BaseModel):
+    enabled: bool
+
+
+class ModePayload(BaseModel):
+    mode: str
+
+
+class ChainPayload(BaseModel):
+    chain_key: str
+
+
+class LiveCommitPayload(BaseModel):
+    token: str
+
+
 def _get_chain_snapshot() -> dict:
     try:
         cfg = get_chain_config()
@@ -331,20 +373,24 @@ def _get_chain_snapshot() -> dict:
             "chain": cfg.chain,
             "chain_id": cfg.chain_id,
             "rpc_http_selected": cfg.rpc_http_selected,
+            "rpc_http_backups_selected": cfg.rpc_http_backups,
             "ws_endpoints_selected": cfg.ws_endpoints_selected,
         }
     except Exception:
         ws_env = [x.strip() for x in str(os.getenv("WS_ENDPOINTS_EXTRA", "")).split(",") if x.strip()]
         rpc_env = [x.strip() for x in str(os.getenv("RPC_HTTP_EXTRA", "")).split(",") if x.strip()]
-        raw_chain_id = str(os.getenv("CHAIN_ID", "0")).strip() or "0"
-        try:
-            chain_id = int(raw_chain_id)
-        except Exception:
-            chain_id = 0
+        chain = str(os.getenv("CHAIN", "unknown")).strip().lower() or "unknown"
+        chain_id = 0
+        with contextlib.suppress(Exception):
+            registry = _load_chain_registry()
+            cfg = registry.get(chain, {})
+            if isinstance(cfg, dict):
+                chain_id = int(cfg.get("chain_id", 0) or 0)
         return {
-            "chain": str(os.getenv("CHAIN", "unknown")).strip().lower() or "unknown",
+            "chain": chain,
             "chain_id": chain_id,
             "rpc_http_selected": rpc_env[0] if rpc_env else "",
+            "rpc_http_backups_selected": rpc_env[1:] if len(rpc_env) > 1 else [],
             "ws_endpoints_selected": ws_env,
         }
 
@@ -452,7 +498,6 @@ async def _reload_chain_runtime(selection_name: str) -> dict:
 
     if sel.family == "EVM":
         cfg = get_chain_config()
-        os.environ["CHAIN_ID"] = str(cfg.chain_id)
         app.state.w3 = Web3(HTTPProvider(cfg.rpc_http_selected)) if cfg.rpc_http_selected else None
         if cfg.ws_endpoints_selected:
             _monitor = WSMempoolMonitor(
@@ -492,7 +537,7 @@ async def _reload_chain_runtime(selection_name: str) -> dict:
         "family": sel.family,
         "chain": sel.chain,
         "chain_key": chain_key,
-        "chain_id": int(os.getenv("CHAIN_ID", "0") or "0"),
+        "chain_id": int(get_chain_config().chain_id),
         "rpc_http_selected": sol_endpoint,
         "ws_endpoints_selected": [],
         "redis_stream": stream_key,
@@ -503,7 +548,7 @@ def _emit_chain_switch_labels_now(*, state: BotState, mode: str) -> None:
     cfg = _get_chain_snapshot()
     family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
     chain = str(cfg.get("chain", "unknown")).strip().lower() or "unknown"
-    set_runtime_bot_state(family=family, chain=chain, state=state.value)
+    set_runtime_bot_state(family=family, chain=chain, state=state.value, mode=mode)
     set_heartbeat(family=family, chain=chain, unix_ts=time.time(), strategy="default", dex="unknown", provider="unknown")
     if _health_snapshot_writer is not None:
         _health_snapshot_writer.maybe_write(
@@ -595,7 +640,7 @@ def _rpc_http_from_env() -> str:
 
 @app.on_event("startup")
 async def _startup():
-    global _health_snapshot_writer, _dex_registry, _dex_router
+    global _health_snapshot_writer, _dex_registry, _dex_router, _rpc_ping_task, _rpc_metrics_client
     logging.basicConfig(level=logging.INFO)
     start_metrics_http_server()
     seed_default_series(
@@ -643,6 +688,9 @@ async def _startup():
     app.state.w3 = Web3(HTTPProvider(rpc)) if rpc else None
     if app.state.w3 and not app.state.w3.is_connected():
         logging.warning("[startup] cannot connect to RPC %s", rpc)
+    app.state._chain_id_validation_error = ""
+    app.state._chain_id_expected = None
+    app.state._chain_id_actual = None
 
     endpoints = _ws_env_endpoints()
     global _monitor, _sol_tracker
@@ -681,20 +729,58 @@ async def _startup():
         set_bot_state(app.state.bot_state_machine.state.value)
     app.state.paused = app.state.bot_state_machine.state == BotState.PAUSED
     set_runtime_state(app.state.bot_state_machine.state)
+    # Runtime chain-id safety check (EVM only): expected config chain_id must match RPC eth_chainId.
+    if family_now == "evm":
+        with contextlib.suppress(Exception):
+            expected_chain_id = int(get_chain_config().chain_id)
+            app.state._chain_id_expected = expected_chain_id
+            try:
+                actual_chain_id = int(app.state.w3.eth.chain_id) if app.state.w3 else None
+            except Exception:
+                actual_chain_id = None
+            app.state._chain_id_actual = actual_chain_id
+            if actual_chain_id is None or int(actual_chain_id) != expected_chain_id:
+                err = f"chain_id_mismatch expected={expected_chain_id} actual={actual_chain_id}"
+                app.state._chain_id_validation_error = "chain_id_mismatch"
+                rec = app.state.bot_state_machine.transition(
+                    BotState.DEGRADED, actor="system", reason=err, force=True
+                )
+                record_bot_state_transition(rec.from_state, rec.to_state, rec.reason)
+                set_runtime_state(BotState.DEGRADED)
+                app.state.paused = True
+                ctrl = getattr(app.state, "switch_controller", None)
+                if ctrl is not None:
+                    ctrl.last_transition_error = "chain_id_mismatch"
+                logging.warning("startup chain-id validation failed: %s", err)
+
     logging.info("Bot state initialized: %s", app.state.bot_state_machine.state.value)
 
     global _runtime_monitor_task
     if _runtime_monitor_task is None or _runtime_monitor_task.done():
         _runtime_monitor_task = asyncio.create_task(_runtime_monitor_loop())
+    if _rpc_metrics_client is None:
+        cfg = get_chain_config()
+        _rpc_metrics_client = AsyncInstrumentedRpcClient(
+            urls=[cfg.rpc_http_selected] + list(cfg.rpc_http_backups),
+            family=str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm",
+            chain=str(cfg.chain).strip().lower() or "unknown",
+        )
+    if _rpc_ping_task is None or _rpc_ping_task.done():
+        _rpc_ping_task = asyncio.create_task(_rpc_ping_loop())
 
 @app.on_event("shutdown")
 async def _shutdown():
-    global _runtime_monitor_task
+    global _runtime_monitor_task, _rpc_ping_task
     if _runtime_monitor_task and not _runtime_monitor_task.done():
         _runtime_monitor_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _runtime_monitor_task
         _runtime_monitor_task = None
+    if _rpc_ping_task and not _rpc_ping_task.done():
+        _rpc_ping_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _rpc_ping_task
+        _rpc_ping_task = None
     if _monitor:
         await _monitor.stop()
     global _sol_tracker
@@ -709,6 +795,36 @@ async def _shutdown():
         await app.state.alerts.close()
 
 
+async def _rpc_ping_loop() -> None:
+    interval_s = max(10.0, float(os.getenv("RPC_PING_INTERVAL_S", "30")))
+    timeout_s = max(1.0, float(os.getenv("RPC_PING_TIMEOUT_S", "5")))
+    connector = aiohttp.TCPConnector(keepalive_timeout=30, ttl_dns_cache=60)
+    timeout = aiohttp.ClientTimeout(total=timeout_s + 1.0)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as sess:
+        while True:
+            try:
+                cfg = _get_chain_snapshot()
+                family = str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm"
+                chain = str(cfg.get("chain", "unknown")).strip().lower() or "unknown"
+                urls = [str(cfg.get("rpc_http_selected", "")).strip()]
+                for u in cfg.get("rpc_http_backups_selected", []) or []:
+                    su = str(u).strip()
+                    if su:
+                        urls.append(su)
+                urls = [u for u in urls if u]
+                if _rpc_metrics_client is not None and family == "evm" and urls:
+                    _rpc_metrics_client.set_context(family=family, chain=chain, urls=urls)
+                    await _rpc_metrics_client.call(
+                        sess,
+                        method="eth_blockNumber",
+                        params=[],
+                        timeout_s=timeout_s,
+                    )
+            except Exception as e:
+                log.debug("rpc ping loop error: %s", e)
+            await asyncio.sleep(interval_s)
+
+
 async def _runtime_monitor_loop() -> None:
     monitor_interval_s = max(5.0, float(os.getenv("INVAR_MONITOR_INTERVAL_S", "15")))
     snapshot_interval_s = max(1.0, float(os.getenv("HEALTH_SNAPSHOT_INTERVAL_S", "10")))
@@ -721,6 +837,21 @@ async def _runtime_monitor_loop() -> None:
             desired_chain = canonicalize_chain_target(
                 _read_ops_value("chain_selection", _effective_chain_key())
             )
+            desired_mode_metric = "unknown"
+            try:
+                raw_desired = _read_ops_state_values()
+                desired_paused = str(raw_desired.get("paused", "false")).strip().lower() == "true"
+                desired_state_metric = "PAUSED" if desired_paused else "TRADING"
+                desired_mode_metric = str(raw_desired.get("mode", "paper"))
+                desired_sel = parse_chain_selection(desired_chain)
+                set_desired_bot_state(
+                    family=desired_sel.family,
+                    chain_target=desired_sel.chain,
+                    state=desired_state_metric,
+                    mode=desired_mode_metric,
+                )
+            except Exception as e:
+                log.debug("desired-state metric update failed chain=%s err=%s", desired_chain, e)
             ctrl = getattr(app.state, "switch_controller", None)
             if ctrl is not None:
                 ctrl.desired_chain = desired_chain
@@ -758,6 +889,7 @@ async def _runtime_monitor_loop() -> None:
                 family=str(os.getenv("CHAIN_FAMILY", "evm")).strip().lower() or "evm",
                 chain=str(cfg.get("chain", "unknown")),
                 state=target_state.value,
+                mode=desired_mode_metric,
             )
             if _health_snapshot_writer is not None:
                 _health_snapshot_writer.maybe_write(
@@ -805,6 +937,32 @@ def _provider_name(url: str) -> str:
         return (urlparse(str(url or "")).hostname or "rpc").lower()
     except Exception:
         return "rpc"
+
+
+def _evm_rpc_chain_id(w3: Web3) -> int:
+    return int(w3.eth.chain_id)
+
+
+def _chain_id_mismatch_error(*, expected: int, actual: int) -> RuntimeError:
+    return RuntimeError(f"chain_id_mismatch expected={expected} actual={actual}")
+
+
+async def _validate_evm_chain_id(*, expected: int, context: str = "runtime") -> int:
+    w3 = getattr(app.state, "w3", None)
+    if not w3:
+        raise RuntimeError(f"{context}_no_rpc_client")
+    actual = int(await asyncio.to_thread(_evm_rpc_chain_id, w3))
+    app.state._chain_id_expected = int(expected)
+    app.state._chain_id_actual = int(actual)
+    if actual != int(expected):
+        err = _chain_id_mismatch_error(expected=int(expected), actual=int(actual))
+        app.state._chain_id_validation_error = "chain_id_mismatch"
+        ctrl = getattr(app.state, "switch_controller", None)
+        if ctrl is not None:
+            ctrl.last_transition_error = "chain_id_mismatch"
+        raise err
+    app.state._chain_id_validation_error = ""
+    return actual
 
 
 def _sol_get_slot(endpoint: str) -> int:
@@ -898,6 +1056,19 @@ async def _observe_chain_progress() -> None:
             log.debug("chain head observe failed: no reachable RPC candidate")
             return
         try:
+            with contextlib.suppress(Exception):
+                expected_chain_id = int(get_chain_config().chain_id)
+                actual_chain_id = int(await asyncio.to_thread(lambda w=app.state.w3: w.eth.chain_id))
+                app.state._chain_id_expected = expected_chain_id
+                app.state._chain_id_actual = actual_chain_id
+                if actual_chain_id != expected_chain_id:
+                    err = f"chain_id_mismatch expected={expected_chain_id} actual={actual_chain_id}"
+                    app.state._chain_id_validation_error = "chain_id_mismatch"
+                    ctrl = getattr(app.state, "switch_controller", None)
+                    if ctrl is not None:
+                        ctrl.last_transition_error = "chain_id_mismatch"
+                else:
+                    app.state._chain_id_validation_error = ""
             prev = getattr(app.state, "_chain_obs_last_head", None)
             max_seen = int(getattr(app.state, "_chain_obs_max_head", head) or head)
             max_seen = max(max_seen, head)
@@ -997,6 +1168,7 @@ async def _apply_chain_target_once(target: str) -> None:
             mode=str(get_operator_state().get("mode", "UNKNOWN")),
         )
         await _reload_chain_runtime(target)
+        await _validate_chain_switch(target)
         sel = parse_chain_selection(target)
         dex_validation = await asyncio.to_thread(
             _validate_dex_profiles_for_chain,
@@ -1033,7 +1205,7 @@ async def _apply_chain_target_once(target: str) -> None:
         app.state._last_chain_target = target
         ctrl = getattr(app.state, "switch_controller", None)
         if ctrl is not None:
-            ctrl.last_transition_error = str(e)
+            ctrl.last_transition_error = "chain_id_mismatch" if "chain_id_mismatch" in str(e) else str(e)
         log.warning("chain_switch_validation old=%s new=%s result=fail error=%s", old_chain, target, e)
         raise
     finally:
@@ -1048,6 +1220,8 @@ async def _validate_chain_switch(target: str) -> None:
         w3 = getattr(app.state, "w3", None)
         if not w3:
             raise RuntimeError("switch_validation_no_rpc_client")
+        expected_chain_id = int(get_chain_config().chain_id)
+        await _validate_evm_chain_id(expected=expected_chain_id, context="switch_validation")
         start = time.time()
         try:
             h0 = int(await asyncio.to_thread(lambda: w3.eth.block_number))
@@ -1168,9 +1342,15 @@ def list_chains():
 
 
 @app.post("/operator/chain")
-def operator_set_chain(name: str):
+def operator_set_chain(name: str | None = None, payload: ChainPayload | None = None):
+    op_id = _new_op_id()
+    chain_name = str(name or "").strip()
+    if payload is not None and str(payload.chain_key or "").strip():
+        chain_name = str(payload.chain_key).strip()
+    if not chain_name:
+        raise HTTPException(status_code=400, detail="missing chain selection")
     try:
-        sel = parse_chain_selection(name)
+        sel = parse_chain_selection(chain_name)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"invalid chain selection: {e}") from e
 
@@ -1208,7 +1388,9 @@ def operator_set_chain(name: str):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"failed to persist desired chain: {e}") from e
 
-    return {"ok": True, "desired_chain": chain_key, "supported_families": sorted(supported)}
+    out = _base_operator_result(op_id=op_id, ok=True, applied=True, message=f"desired_chain={chain_key}")
+    out.update({"desired_chain": chain_key, "supported_families": sorted(supported)})
+    return out
 
 
 @app.get("/operator/events")
@@ -1251,6 +1433,283 @@ def operator_events(limit: int = 20):
         raise HTTPException(status_code=503, detail=f"operator events query failed: {e}") from e
 
 
+@app.get("/attempts")
+def attempts(limit: int = 10):
+    safe_limit = max(1, min(int(limit), 50))
+    try:
+        with _db_connect() as conn:
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT
+                      COALESCE(broadcasted_at, created_at) AS ts,
+                      attempt_id, opportunity_id, strategy, status, reason_code,
+                      expected_pnl_usd, gas_estimate, sim_outcome, sim_revert_reason,
+                      tx_hash, chain
+                    FROM attempts
+                    ORDER BY COALESCE(broadcasted_at, created_at) DESC
+                    LIMIT %s
+                    """,
+                    (safe_limit,),
+                ).fetchall()
+                items = []
+                for r in rows:
+                    items.append(
+                        {
+                            "ts": r[0].isoformat() if r[0] else None,
+                            "attempt_id": r[1],
+                            "opportunity_id": r[2],
+                            "strategy": r[3],
+                            "status": r[4],
+                            "reason_code": r[5],
+                            "expected_pnl_usd": float(r[6]) if r[6] is not None else None,
+                            "gas_estimate": float(r[7]) if r[7] is not None else None,
+                            "sim_outcome": r[8],
+                            "sim_revert_reason": r[9],
+                            "tx_hash": r[10],
+                            "chain": r[11],
+                        }
+                    )
+                return {"ok": True, "limit": safe_limit, "items": items}
+            except Exception:
+                rows = conn.execute(
+                    """
+                    SELECT created_at, id, tx_hash, decision, reject_reason, pnl_est, estimated_gas, sim_ok, chain
+                    FROM candidates
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (safe_limit,),
+                ).fetchall()
+                items = []
+                for r in rows:
+                    items.append(
+                        {
+                            "ts": r[0].isoformat() if r[0] else None,
+                            "attempt_id": str(r[1]),
+                            "opportunity_id": None,
+                            "strategy": "none_selected" if str(r[3] or "").upper() != "ACCEPT" else "default",
+                            "status": str(r[3] or "UNKNOWN").upper(),
+                            "reason_code": r[4] or "none",
+                            "expected_pnl_usd": float(r[5]) if r[5] is not None else None,
+                            "gas_estimate": float(r[6]) if r[6] is not None else None,
+                            "sim_outcome": "OK" if bool(r[7]) else "FAIL",
+                            "sim_revert_reason": None,
+                            "tx_hash": None,
+                            "chain": r[8] or str(os.getenv("CHAIN", "unknown")),
+                        }
+                    )
+                return {"ok": True, "limit": safe_limit, "items": items}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"attempts query failed: {e}") from e
+
+
+@app.get("/top")
+def top(window: str = "24h"):
+    iv = "24 hours"
+    if str(window).strip().lower() in {"10m", "10min", "10mins"}:
+        iv = "10 minutes"
+    q = f"""
+    SELECT COALESCE(reject_reason, 'none') AS reason, COUNT(*)::bigint AS c
+    FROM candidates
+    WHERE created_at >= now() - interval '{iv}'
+    GROUP BY 1
+    ORDER BY c DESC
+    LIMIT 20
+    """
+    try:
+        with _db_connect() as conn:
+            rows = conn.execute(q).fetchall()
+            return {
+                "ok": True,
+                "window": window,
+                "items": [{"reason_code": str(r[0]), "count": int(r[1])} for r in rows],
+            }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"top query failed: {e}") from e
+
+
+@app.get("/pipeline")
+def pipeline():
+    window = "10 minutes"
+    counts = {
+        "mempool_msgs_10m": 0,
+        "decode_ok_10m": 0,
+        "decode_fail_10m": 0,
+        "detector_hit_10m": 0,
+        "detector_miss_10m": 0,
+        "candidates_emitted_10m": 0,
+    }
+    decode_fail_reasons: list[dict] = []
+    detector_miss_reasons: list[dict] = []
+    last_errors = {
+        "decode": None,
+        "detector": None,
+        "candidate": None,
+    }
+    try:
+        with _db_connect() as conn:
+            row = conn.execute(
+                f"""
+                WITH
+                me AS (
+                  SELECT COUNT(*)::bigint AS c
+                  FROM mempool_events
+                  WHERE created_at >= now() - interval '{window}'
+                ),
+                de AS (
+                  SELECT COUNT(*)::bigint AS c
+                  FROM mempool_errors
+                  WHERE created_at >= now() - interval '{window}'
+                    AND error_type LIKE 'decode_%'
+                ),
+                dh AS (
+                  SELECT COUNT(*)::bigint AS c
+                  FROM candidates
+                  WHERE created_at >= now() - interval '{window}'
+                    AND COALESCE(notes->>'detector_match','false') IN ('true','t','1','True')
+                ),
+                dm AS (
+                  SELECT COUNT(*)::bigint AS c
+                  FROM candidates
+                  WHERE created_at >= now() - interval '{window}'
+                    AND COALESCE(notes->>'detector_match','false') NOT IN ('true','t','1','True')
+                ),
+                ce AS (
+                  SELECT COUNT(*)::bigint AS c
+                  FROM candidates
+                  WHERE created_at >= now() - interval '{window}'
+                    AND UPPER(COALESCE(decision,'')) = 'ACCEPT'
+                )
+                SELECT
+                  (SELECT c FROM me) AS mempool_msgs_10m,
+                  GREATEST((SELECT c FROM me) - (SELECT c FROM de), 0)::bigint AS decode_ok_10m,
+                  (SELECT c FROM de) AS decode_fail_10m,
+                  (SELECT c FROM dh) AS detector_hit_10m,
+                  (SELECT c FROM dm) AS detector_miss_10m,
+                  (SELECT c FROM ce) AS candidates_emitted_10m
+                """
+            ).fetchone()
+            if row:
+                counts = {
+                    "mempool_msgs_10m": int(row[0] or 0),
+                    "decode_ok_10m": int(row[1] or 0),
+                    "decode_fail_10m": int(row[2] or 0),
+                    "detector_hit_10m": int(row[3] or 0),
+                    "detector_miss_10m": int(row[4] or 0),
+                    "candidates_emitted_10m": int(row[5] or 0),
+                }
+
+            dfr = conn.execute(
+                f"""
+                SELECT COALESCE(error_type, 'decode_unknown') AS reason, COUNT(*)::bigint AS c
+                FROM mempool_errors
+                WHERE created_at >= now() - interval '{window}'
+                  AND error_type LIKE 'decode_%'
+                GROUP BY 1
+                ORDER BY c DESC
+                LIMIT 10
+                """
+            ).fetchall()
+            decode_fail_reasons = [{"reason": str(r[0]), "count": int(r[1])} for r in dfr]
+
+            dmr = conn.execute(
+                f"""
+                SELECT COALESCE(reject_reason, 'detector_miss') AS reason, COUNT(*)::bigint AS c
+                FROM candidates
+                WHERE created_at >= now() - interval '{window}'
+                  AND COALESCE(notes->>'detector_match','false') NOT IN ('true','t','1','True')
+                GROUP BY 1
+                ORDER BY c DESC
+                LIMIT 10
+                """
+            ).fetchall()
+            detector_miss_reasons = [{"reason": str(r[0]), "count": int(r[1])} for r in dmr]
+
+            l_decode = conn.execute(
+                """
+                SELECT error_msg
+                FROM mempool_errors
+                WHERE error_type LIKE 'decode_%'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if l_decode and l_decode[0]:
+                last_errors["decode"] = str(l_decode[0])[:300]
+
+            l_detector = conn.execute(
+                """
+                SELECT reject_reason
+                FROM candidates
+                WHERE reject_reason IS NOT NULL AND reject_reason <> ''
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if l_detector and l_detector[0]:
+                last_errors["detector"] = str(l_detector[0])[:300]
+
+            l_candidate = conn.execute(
+                """
+                SELECT error_type, error_msg
+                FROM mempool_errors
+                WHERE error_type NOT LIKE 'decode_%'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if l_candidate:
+                et = str(l_candidate[0] or "unknown")
+                em = str(l_candidate[1] or "")
+                last_errors["candidate"] = f"{et}: {em[:260]}".strip()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"pipeline query failed: {e}") from e
+
+    return {
+        "ok": True,
+        "window": "10m",
+        "stream": str(os.getenv("REDIS_STREAM", "mempool:pending:txs")),
+        "candidates_stream_prefix": str(os.getenv("CANDIDATES_STREAM_PREFIX", "candidates:default")),
+        "detectors_active": ["candidate_detector", "cross_dex_arb", "routing_improvement"],
+        "token_universe_loaded": True,
+        "dex_packs_loaded": True,
+        "counts_10m": counts,
+        "decode_fail_reasons": decode_fail_reasons,
+        "detector_miss_reasons": detector_miss_reasons,
+        "last_errors": last_errors,
+    }
+
+
+@app.get("/strategies")
+def strategies():
+    enabled = [x.strip() for x in str(os.getenv("ENABLED_STRATEGIES", "default")).split(",") if x.strip()]
+    return {
+        "ok": True,
+        "items": [{"name": s, "seen_10m": 0, "scored_10m": 0, "selected_10m": 0, "sim_ok_10m": 0, "sim_fail_10m": 0} for s in enabled],
+    }
+
+
+@app.get("/readiness")
+def readiness():
+    checks = []
+    try:
+        h = health()
+        checks.append({"name": "health", "ok": bool(h.get("ok"))})
+        checks.append({"name": "rpc_connected", "ok": bool(h.get("w3_connected"))})
+    except Exception as e:
+        checks.append({"name": "health", "ok": False, "error": str(e)})
+    try:
+        with _db_connect() as conn:
+            conn.execute("SELECT 1")
+        checks.append({"name": "db", "ok": True})
+    except Exception as e:
+        checks.append({"name": "db", "ok": False, "error": str(e)})
+    ok = all(bool(c.get("ok")) for c in checks)
+    failed = [c for c in checks if not bool(c.get("ok"))]
+    return {"ok": ok, "checks": checks, "failed": failed}
+
+
 @app.get("/status")
 def status():
     desired = operator_state()
@@ -1286,6 +1745,9 @@ def status():
         "effective_chain": effective_chain_key,
         "effective_family": family_now,
         "resolved_chain_id": effective.get("resolved_chain_id"),
+        "chain_id_expected": getattr(app.state, "_chain_id_expected", None),
+        "chain_id_actual": getattr(app.state, "_chain_id_actual", None),
+        "config_error": str(getattr(app.state, "_chain_id_validation_error", "") or ""),
         "rpc_url": _mask_url(str(effective.get("rpc_url", ""))),
         "ws_url": _mask_url(str(ws_primary)),
         "head": head_value,
@@ -1545,6 +2007,100 @@ def resume_trading():
         return _transition_state(BotState.TRADING, actor="manual", reason="api_resume")
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"failed to persist paused=false: {e}") from e
+
+
+@app.post("/operator/pause")
+def operator_pause():
+    op_id = _new_op_id()
+    try:
+        _transition_state(BotState.PAUSED, actor="operator", reason=f"op:{op_id}:pause", force=True)
+        return _base_operator_result(op_id=op_id, ok=True, applied=True, message="paused")
+    except Exception as e:
+        return _base_operator_result(op_id=op_id, ok=False, applied=False, message=f"pause_failed:{e}")
+
+
+@app.post("/operator/resume")
+def operator_resume():
+    op_id = _new_op_id()
+    try:
+        _transition_state(BotState.TRADING, actor="operator", reason=f"op:{op_id}:resume", force=True)
+        return _base_operator_result(op_id=op_id, ok=True, applied=True, message="resumed")
+    except Exception as e:
+        return _base_operator_result(op_id=op_id, ok=False, applied=False, message=f"resume_failed:{e}")
+
+
+@app.post("/operator/killswitch")
+def operator_killswitch(payload: KillSwitchPayload):
+    op_id = _new_op_id()
+    try:
+        with _db_connect() as conn:
+            _ensure_ops_state_table(conn)
+            conn.execute(
+                """
+                INSERT INTO ops_state(k, v, updated_at)
+                VALUES ('kill_switch', %s, now())
+                ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v, updated_at=now()
+                """,
+                ("true" if payload.enabled else "false",),
+            )
+        return _base_operator_result(op_id=op_id, ok=True, applied=True, message=f"kill_switch={'on' if payload.enabled else 'off'}")
+    except Exception as e:
+        return _base_operator_result(op_id=op_id, ok=False, applied=False, message=f"killswitch_failed:{e}")
+
+
+@app.post("/operator/mode")
+def operator_mode(payload: ModePayload):
+    op_id = _new_op_id()
+    mode = str(payload.mode).strip().lower()
+    if mode not in {"paper", "dryrun", "live"}:
+        raise HTTPException(status_code=400, detail="mode must be paper|dryrun|live")
+    try:
+        with _db_connect() as conn:
+            _ensure_ops_state_table(conn)
+            conn.execute(
+                """
+                INSERT INTO ops_state(k, v, updated_at)
+                VALUES ('mode', %s, now())
+                ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v, updated_at=now()
+                """,
+                (mode,),
+            )
+        return _base_operator_result(op_id=op_id, ok=True, applied=True, message=f"mode={mode}")
+    except Exception as e:
+        return _base_operator_result(op_id=op_id, ok=False, applied=False, message=f"mode_failed:{e}")
+
+
+@app.post("/operator/live/prepare")
+def operator_live_prepare():
+    token = secrets.token_hex(4).upper()
+    app.state._live_confirm_token = token
+    app.state._live_confirm_exp = time.time() + 60.0
+    return {"ok": True, "token": token, "expires_in_s": 60}
+
+
+@app.post("/operator/live/commit")
+def operator_live_commit(payload: LiveCommitPayload):
+    op_id = _new_op_id()
+    token = str(payload.token).strip().upper()
+    cur = str(getattr(app.state, "_live_confirm_token", "")).strip().upper()
+    exp = float(getattr(app.state, "_live_confirm_exp", 0.0) or 0.0)
+    if not cur or token != cur or time.time() > exp:
+        return _base_operator_result(op_id=op_id, ok=False, applied=False, message="live_commit_invalid_or_expired_token")
+    app.state._live_confirm_token = ""
+    app.state._live_confirm_exp = 0.0
+    try:
+        with _db_connect() as conn:
+            _ensure_ops_state_table(conn)
+            conn.execute(
+                """
+                INSERT INTO ops_state(k, v, updated_at)
+                VALUES ('mode', 'live', now())
+                ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v, updated_at=now()
+                """
+            )
+        return _base_operator_result(op_id=op_id, ok=True, applied=True, message="mode=live")
+    except Exception as e:
+        return _base_operator_result(op_id=op_id, ok=False, applied=False, message=f"live_commit_failed:{e}")
 
 
 @app.post("/state/{target}")

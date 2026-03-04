@@ -131,6 +131,7 @@ class RpcCaller:
         self,
         fn: Callable[..., Awaitable[Any]],
         *args: Any,
+        method: str = "unknown",
         **kwargs: Any,
     ) -> Any:
         family = _family_for_chain(self.chain)
@@ -148,6 +149,7 @@ class RpcCaller:
                     family=family,
                     chain=self.chain,
                     provider=self.provider,
+                    method=method,
                     seconds=max(0.0, time.perf_counter() - t0),
                 )
                 return result
@@ -164,6 +166,7 @@ class RpcCaller:
                 family=family,
                 chain=self.chain,
                 provider=self.provider,
+                method=method,
                 seconds=max(0.0, time.perf_counter() - t0),
             )
             if attempt < self.retries and not self.circuit.is_open():

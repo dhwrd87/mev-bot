@@ -19,7 +19,13 @@ def test_metric_helpers_increment_and_set():
 
     m.record_rpc_latency(family="evm", chain="sepolia", provider="publicnode", seconds=0.12)
     assert (
-        m.rpc_latency_seconds.labels(family="evm", chain="sepolia", network="testnet", provider="publicnode")._sum.get()
+        m.rpc_latency_seconds.labels(
+            family="evm",
+            chain="sepolia",
+            network="testnet",
+            provider="publicnode",
+            method="unknown",
+        )._sum.get()
         > 0
     )
     before = m.tx_confirm_latency_seconds.labels(
@@ -32,7 +38,7 @@ def test_metric_helpers_increment_and_set():
     assert after > before
 
     m.set_runtime_bot_state(family="evm", chain="sepolia", state="TRADING")
-    assert m.bot_state_value.labels(family="evm", chain="sepolia", network="testnet")._value.get() == 4.0
+    assert m.runtime_state_value.labels(family="evm", chain="sepolia", network="testnet")._value.get() == 3.0
     assert m.state.labels(family="evm", chain="sepolia", network="testnet")._value.get() == 3.0
 
     m.set_head_lag(family="evm", chain="sepolia", provider="p", blocks=2)
@@ -48,12 +54,56 @@ def test_metric_helpers_increment_and_set():
     assert m.slot_lag.labels(family="sol", chain="solana", network="mainnet", provider="p")._value.get() == 3.0
     assert m.chain_head.labels(family="evm", chain="sepolia", network="testnet", provider="p")._value.get() == 123.0
     assert m.chain_slot.labels(family="sol", chain="solana", network="mainnet", provider="p")._value.get() == 999.0
-    assert m.heartbeat_ts.labels(family="evm", chain="sepolia", network="testnet")._value.get() == 1_700_000_000.0
+    assert (
+        m.heartbeat_ts.labels(
+            family="evm",
+            chain="sepolia",
+            network="testnet",
+            provider="unknown",
+            dex="unknown",
+            strategy="default",
+        )._value.get()
+        == 1_700_000_000.0
+    )
     assert (
         m.stream_events_observed_total.labels(stream="mempool:pending:txs", source="api_probe")._value.get()
         == before_stream + 3
     )
     assert m.chain_info.labels(family="evm", chain="sepolia", network="testnet")._value.get() == 1.0
+
+
+def test_runtime_state_metric_has_single_labelset_after_chain_switch():
+    m._reset_state_gauges_for_tests()
+    m.set_runtime_bot_state(family="evm", chain="sepolia", state="READY")
+    m.set_runtime_bot_state(family="evm", chain="base", state="TRADING")
+
+    samples = []
+    for metric in m.runtime_state_value.collect():
+        for s in metric.samples:
+            if s.name == "mevbot_runtime_state_value":
+                samples.append(s)
+    assert len(samples) == 1
+    assert samples[0].labels["chain"] == "base"
+    assert samples[0].labels["family"] == "evm"
+    assert samples[0].labels["network"] == "mainnet"
+
+    m.set_desired_bot_state(family="evm", chain_target="sepolia", state="PAUSED", mode="paper")
+    m.set_desired_bot_state(family="evm", chain_target="base", state="TRADING", mode="paper")
+    desired_samples = []
+    for metric in m.desired_state_value.collect():
+        for s in metric.samples:
+            if s.name == "mevbot_desired_state_value":
+                desired_samples.append(s)
+    assert len(desired_samples) == 1
+    assert desired_samples[0].labels["chain"] == "base"
+    assert (
+        m.effective_chain_info.labels(family="evm", chain="base", network="mainnet")._value.get()
+        == 1.0
+    )
+    assert (
+        m.desired_mode_info.labels(family="evm", chain="base", network="mainnet")._value.get()
+        == 2.0
+    )
 
 
 def test_metric_helpers_canonicalize_chain_aliases():

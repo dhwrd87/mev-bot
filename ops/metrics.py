@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Optional
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
@@ -64,7 +65,7 @@ tx_confirm_latency_seconds = Histogram(
 rpc_latency_seconds = Histogram(
     "mevbot_rpc_latency_seconds",
     "RPC request latency in seconds",
-    ["family", "chain", "network", "provider"],
+    ["family", "chain", "network", "provider", "method"],
     buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
 )
 rpc_errors_total = Counter(
@@ -75,13 +76,58 @@ rpc_errors_total = Counter(
 
 bot_state_value = Gauge(
     "mevbot_bot_state_value",
-    "DEPRECATED: use mevbot_state{family,chain} enum gauge instead",
+    "DEPRECATED: use mevbot_runtime_state_value{family,chain,network} enum gauge instead",
+    ["family", "chain", "network"],
+)
+runtime_state_value = Gauge(
+    "mevbot_runtime_state_value",
+    "Effective runtime bot state enum (UNKNOWN=0, PAUSED=1, READY=2, TRADING=3, DEGRADED=4, PANIC=5)",
+    ["family", "chain", "network"],
+)
+effective_state_value = Gauge(
+    "mevbot_effective_state_value",
+    "Effective runtime bot state enum (UNKNOWN=0, PAUSED=1, READY=2, TRADING=3, DEGRADED=4, PANIC=5)",
+    ["family", "chain", "network"],
+)
+desired_state_value = Gauge(
+    "mevbot_desired_state_value",
+    "Desired operator bot state enum (UNKNOWN=0, PAUSED=1, READY=2, TRADING=3, DEGRADED=4, PANIC=5)",
+    ["family", "chain", "network"],
+)
+effective_chain_info = Gauge(
+    "mevbot_effective_chain_info",
+    "Effective runtime chain marker (always 1)",
+    ["family", "chain", "network"],
+)
+desired_chain_info = Gauge(
+    "mevbot_desired_chain_info",
+    "Desired operator chain marker (always 1)",
+    ["family", "chain", "network"],
+)
+effective_mode_info = Gauge(
+    "mevbot_effective_mode_info",
+    "Effective runtime mode enum (UNKNOWN=0, DRYRUN=1, PAPER=2, LIVE=3)",
+    ["family", "chain", "network"],
+)
+desired_mode_info = Gauge(
+    "mevbot_desired_mode_info",
+    "Desired operator mode enum (UNKNOWN=0, DRYRUN=1, PAPER=2, LIVE=3)",
     ["family", "chain", "network"],
 )
 state_gauge = Gauge(
     "mevbot_state",
-    "Bot state enum (UNKNOWN=0, PAUSED=1, READY=2, TRADING=3, DEGRADED=4, PANIC=5)",
+    "DEPRECATED: use mevbot_runtime_state_value; runtime state enum (UNKNOWN=0, PAUSED=1, READY=2, TRADING=3, DEGRADED=4, PANIC=5)",
     ["family", "chain", "network"],
+)
+runtime_context_info = Gauge(
+    "mevbot_runtime_context_info",
+    "Effective runtime context marker (always 1)",
+    ["family", "chain", "network", "state", "mode"],
+)
+desired_context_info = Gauge(
+    "mevbot_desired_context_info",
+    "Desired operator context marker (always 1)",
+    ["family", "chain", "network", "state", "mode"],
 )
 head_lag_blocks = Gauge(
     "mevbot_head_lag_blocks",
@@ -338,6 +384,17 @@ _STATE_ENUM_STD = {
     "DEGRADED": 4.0,
     "PANIC": 5.0,
 }
+_MODE_ENUM_STD = {
+    "UNKNOWN": 0.0,
+    "DRYRUN": 1.0,
+    "PAPER": 2.0,
+    "LIVE": 3.0,
+}
+_STATE_MUTEX = threading.Lock()
+_last_runtime_state_labels: tuple[str, str, str] | None = None
+_last_runtime_context_labels: tuple[str, str, str, str, str] | None = None
+_last_desired_state_labels: tuple[str, str, str] | None = None
+_last_desired_context_labels: tuple[str, str, str, str, str] | None = None
 
 _REVERT_REASON_BUCKETS = {
     "nonce_too_low",
@@ -397,6 +454,16 @@ def map_rpc_error_code_bucket(code: str | int | None) -> str:
     return "other"
 
 
+def _remove_gauge_labels(gauge: Gauge, labels: tuple[str, ...]) -> None:
+    try:
+        gauge.remove(*labels)
+    except KeyError:
+        pass
+    except Exception:
+        # Metrics updates must stay best-effort and never break runtime loops.
+        log.debug("failed removing stale labels from %s", getattr(gauge, "_name", "gauge"), exc_info=True)
+
+
 def start_metrics_http_server(port: Optional[int] = None) -> None:
     global _SERVER_STARTED
     if _SERVER_STARTED:
@@ -422,7 +489,7 @@ def seed_default_series(*, family: str, chain: str) -> None:
         family=fam, chain=ch, network=network, strategy=strategy
     ).observe(0.0)
     rpc_latency_seconds.labels(
-        family=fam, chain=ch, network=network, provider=provider
+        family=fam, chain=ch, network=network, provider=provider, method="unknown"
     ).observe(0.0)
     sim_fail_total.labels(family=fam, chain=ch, network=network, strategy=strategy, reason=reason).inc(0)
     tx_revert_total.labels(family=fam, chain=ch, network=network, reason=reason).inc(0)
@@ -516,10 +583,21 @@ def record_tx_confirm_latency(*, family: str, chain: str, seconds: float, strate
     ).observe(max(0.0, float(seconds)))
 
 
-def record_rpc_latency(*, family: str, chain: str, provider: str, seconds: float) -> None:
+def record_rpc_latency(
+    *,
+    family: str,
+    chain: str,
+    provider: str,
+    seconds: float,
+    method: str = "unknown",
+) -> None:
     c = _canon_ctx(family=family, chain=chain, provider=provider)
     rpc_latency_seconds.labels(
-        family=c["family"], chain=c["chain"], network=c["network"], provider=c["provider"]
+        family=c["family"],
+        chain=c["chain"],
+        network=c["network"],
+        provider=c["provider"],
+        method=_norm(method),
     ).observe(max(0.0, float(seconds)))
 
 
@@ -538,13 +616,89 @@ def record_rpc_error(*, provider: str, code_bucket: str | int | None, family: st
     ).inc()
 
 
-def set_runtime_bot_state(*, family: str, chain: str, state: str) -> None:
+def set_runtime_bot_state(*, family: str, chain: str, state: str, mode: str | None = None) -> None:
     c = _canon_ctx(family=family, chain=chain)
     s = str(state).upper()
-    bot_state_value.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(_STATE_ENUM.get(s, 0.0))
+    runtime_labels = (c["family"], c["chain"], c["network"])
+    mode_norm = _norm(mode if mode is not None else os.getenv("MODE"), default="unknown")
+    context_labels = (c["family"], c["chain"], c["network"], s, mode_norm.upper())
+
+    global _last_runtime_state_labels, _last_runtime_context_labels
+    with _STATE_MUTEX:
+        if _last_runtime_state_labels and _last_runtime_state_labels != runtime_labels:
+            _remove_gauge_labels(runtime_state_value, _last_runtime_state_labels)
+            _remove_gauge_labels(effective_state_value, _last_runtime_state_labels)
+            _remove_gauge_labels(state_gauge, _last_runtime_state_labels)
+            _remove_gauge_labels(bot_state_value, _last_runtime_state_labels)
+            _remove_gauge_labels(chain_info, _last_runtime_state_labels)
+            _remove_gauge_labels(effective_chain_info, _last_runtime_state_labels)
+            _remove_gauge_labels(effective_mode_info, _last_runtime_state_labels)
+        if _last_runtime_context_labels and _last_runtime_context_labels != context_labels:
+            _remove_gauge_labels(runtime_context_info, _last_runtime_context_labels)
+        _last_runtime_state_labels = runtime_labels
+        _last_runtime_context_labels = context_labels
+
     state_metric_value = _STATE_ENUM_STD.get(s, _STATE_ENUM_STD["UNKNOWN"])
+    runtime_state_value.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(state_metric_value)
+    effective_state_value.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(state_metric_value)
+    # Backward-compat aliases kept temporarily.
+    bot_state_value.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(_STATE_ENUM.get(s, 0.0))
     state_gauge.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(state_metric_value)
     chain_info.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(1.0)
+    effective_chain_info.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(1.0)
+    effective_mode_info.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(
+        _MODE_ENUM_STD.get(mode_norm.upper(), _MODE_ENUM_STD["UNKNOWN"])
+    )
+    runtime_context_info.labels(
+        family=c["family"],
+        chain=c["chain"],
+        network=c["network"],
+        state=s,
+        mode=mode_norm.upper(),
+    ).set(1.0)
+
+
+def set_desired_bot_state(
+    *,
+    family: str,
+    chain_target: str | None = None,
+    chain: str | None = None,
+    state: str,
+    mode: str = "unknown",
+) -> None:
+    c = _canon_ctx(family=family, chain=(chain if chain is not None else chain_target))
+    s = str(state).upper()
+    m = _norm(mode, default="unknown")
+    desired_labels = (c["family"], c["chain"], c["network"])
+    desired_context_labels = (c["family"], c["chain"], c["network"], s, m.upper())
+
+    global _last_desired_state_labels, _last_desired_context_labels
+    with _STATE_MUTEX:
+        if _last_desired_state_labels and _last_desired_state_labels != desired_labels:
+            _remove_gauge_labels(desired_state_value, _last_desired_state_labels)
+            _remove_gauge_labels(desired_chain_info, _last_desired_state_labels)
+            _remove_gauge_labels(desired_mode_info, _last_desired_state_labels)
+        if _last_desired_context_labels and _last_desired_context_labels != desired_context_labels:
+            _remove_gauge_labels(desired_context_info, _last_desired_context_labels)
+        _last_desired_state_labels = desired_labels
+        _last_desired_context_labels = desired_context_labels
+
+    desired_state_value.labels(
+        family=c["family"],
+        chain=c["chain"],
+        network=c["network"],
+    ).set(_STATE_ENUM_STD.get(s, _STATE_ENUM_STD["UNKNOWN"]))
+    desired_chain_info.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(1.0)
+    desired_mode_info.labels(family=c["family"], chain=c["chain"], network=c["network"]).set(
+        _MODE_ENUM_STD.get(m.upper(), _MODE_ENUM_STD["UNKNOWN"])
+    )
+    desired_context_info.labels(
+        family=c["family"],
+        chain=c["chain"],
+        network=c["network"],
+        state=s,
+        mode=m.upper(),
+    ).set(1.0)
 
 
 def set_head_lag(*, family: str, chain: str, provider: str, blocks: float) -> None:
@@ -994,6 +1148,32 @@ def record_tx_result(
             strategy=strategy,
             seconds=float(confirm_latency_s),
         )
+
+
+def _reset_state_gauges_for_tests() -> None:
+    global _last_runtime_state_labels, _last_runtime_context_labels
+    global _last_desired_state_labels, _last_desired_context_labels
+    with _STATE_MUTEX:
+        if _last_runtime_state_labels:
+            _remove_gauge_labels(runtime_state_value, _last_runtime_state_labels)
+            _remove_gauge_labels(effective_state_value, _last_runtime_state_labels)
+            _remove_gauge_labels(state_gauge, _last_runtime_state_labels)
+            _remove_gauge_labels(bot_state_value, _last_runtime_state_labels)
+            _remove_gauge_labels(chain_info, _last_runtime_state_labels)
+            _remove_gauge_labels(effective_chain_info, _last_runtime_state_labels)
+            _remove_gauge_labels(effective_mode_info, _last_runtime_state_labels)
+        if _last_runtime_context_labels:
+            _remove_gauge_labels(runtime_context_info, _last_runtime_context_labels)
+        if _last_desired_state_labels:
+            _remove_gauge_labels(desired_state_value, _last_desired_state_labels)
+            _remove_gauge_labels(desired_chain_info, _last_desired_state_labels)
+            _remove_gauge_labels(desired_mode_info, _last_desired_state_labels)
+        if _last_desired_context_labels:
+            _remove_gauge_labels(desired_context_info, _last_desired_context_labels)
+        _last_runtime_state_labels = None
+        _last_runtime_context_labels = None
+        _last_desired_state_labels = None
+        _last_desired_context_labels = None
 
 
 # Backward-compatible alias expected by some callers/tests.

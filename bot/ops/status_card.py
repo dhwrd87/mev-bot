@@ -35,6 +35,7 @@ class StatusCardManager:
         status_channel_id: int,
         refresh_s: int,
         snapshot_fetcher: Callable[[], Awaitable[StatusCardSnapshot]],
+        embed_fetcher: Optional[Callable[[], Awaitable[discord.Embed]]] = None,
         kv_read: Callable[[str, str], str],
         kv_write: Callable[[str, str], None],
         audit_fn: Callable[[str], Awaitable[None]],
@@ -43,13 +44,21 @@ class StatusCardManager:
         self.status_channel_id = status_channel_id
         self.refresh_s = max(30, min(refresh_s, 60))
         self.snapshot_fetcher = snapshot_fetcher
+        self.embed_fetcher = embed_fetcher
         self.kv_read = kv_read
         self.kv_write = kv_write
         self.audit_fn = audit_fn
         self._task: Optional[asyncio.Task] = None
+        self._disabled_logged = False
+        self._last_warn_sig = ""
 
     def start(self) -> None:
         if self.status_channel_id <= 0:
+            if not self._disabled_logged:
+                self._disabled_logged = True
+                log.warning(
+                    "status card disabled: DISCORD_OPERATOR_STATUS_CHANNEL_ID is unset/0; no status posting will occur"
+                )
             return
         if self._task and not self._task.done():
             return
@@ -66,15 +75,21 @@ class StatusCardManager:
             try:
                 await self.refresh_once()
             except Exception as e:
-                log.warning("status card refresh failed: %s", e)
+                await self._warn_and_audit(f"status_card_refresh_failed:{e}")
             await asyncio.sleep(self.refresh_s)
 
     async def refresh_once(self) -> None:
         ch = await self._resolve_channel()
         if ch is None:
+            await self._warn_and_audit(
+                f"status_card_channel_unavailable channel_id={self.status_channel_id}"
+            )
             return
-        snap = await self.snapshot_fetcher()
-        embed = self._build_embed(snap)
+        if self.embed_fetcher is not None:
+            embed = await self.embed_fetcher()
+        else:
+            snap = await self.snapshot_fetcher()
+            embed = self._build_embed(snap)
 
         msg = await self._resolve_message(ch)
         if msg is None:
@@ -95,7 +110,9 @@ class StatusCardManager:
             if isinstance(fetched, discord.TextChannel):
                 return fetched
         except Exception as e:
-            log.warning("status channel fetch failed id=%s err=%s", self.status_channel_id, e)
+            await self._warn_and_audit(
+                f"status_channel_fetch_failed id={self.status_channel_id} err={e}"
+            )
         return None
 
     async def _resolve_message(self, ch: discord.TextChannel) -> Optional[discord.Message]:
@@ -119,7 +136,7 @@ class StatusCardManager:
         try:
             await self._discord_call(msg.pin, reason="MEV operator status card")
         except Exception as e:
-            log.warning("status card pin failed message_id=%s err=%s", msg.id, e)
+            await self._warn_and_audit(f"status_card_pin_failed message_id={msg.id} err={e}")
 
     async def _discord_call(self, fn, *args, **kwargs):
         delay = 1.0
@@ -135,6 +152,15 @@ class StatusCardManager:
                 await asyncio.sleep(min(max(sleep_s, 0.5), 15.0))
                 delay = min(delay * 2.0, 15.0)
         raise RuntimeError("discord call retry budget exhausted")
+
+    async def _warn_and_audit(self, msg: str) -> None:
+        sig = str(msg)
+        if sig == self._last_warn_sig:
+            return
+        self._last_warn_sig = sig
+        log.warning(msg)
+        with contextlib.suppress(Exception):
+            await self.audit_fn(msg)
 
     def _build_embed(self, s: StatusCardSnapshot) -> discord.Embed:
         em = discord.Embed(

@@ -217,7 +217,7 @@ class AppSettings(BaseSettings):
 
         out.setdefault("chain", {
             "CHAIN": env.get("CHAIN"),
-            "CHAIN_ID": env.get("CHAIN_ID") or str(cfg.chain_id),
+            "CHAIN_ID": str(cfg.chain_id),
             "RPC_HTTP": rpc_http,
             "RPC_HTTP_BACKUP": rpc_http_backup,
         })

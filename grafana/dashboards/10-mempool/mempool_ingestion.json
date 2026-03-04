@@ -24,7 +24,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) * 60 or vector(0)",
+          "expr": "max(mevbot_mempool_tpm{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -49,14 +49,14 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) or vector(0)",
+          "expr": "max(mevbot_mempool_tps{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)",
           "refId": "A"
         }
       ]
     },
     {
       "type": "stat",
-      "title": "WS Connected (per endpoint)",
+      "title": "Stream Events Observed (5m)",
       "gridPos": {
         "x": 16,
         "y": 0,
@@ -73,14 +73,14 @@
       },
       "targets": [
         {
-          "expr": "max by (endpoint) (mevbot_mempool_ws_connected{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}) or vector(0)",
+          "expr": "sum by (source, stream) (increase(mevbot_stream_events_observed_total[5m])) or vector(0)",
           "refId": "A"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "Unique tx rate",
+      "title": "Mempool TPM (timeseries)",
       "gridPos": {
         "x": 0,
         "y": 8,
@@ -89,7 +89,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(mevbot_mempool_unique_tx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[1m])) * 60",
+          "expr": "max(mevbot_mempool_tpm{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)",
           "legendFormat": "TPM",
           "refId": "A"
         }
@@ -97,7 +97,7 @@
     },
     {
       "type": "table",
-      "title": "Per-endpoint intake & errors",
+      "title": "Ingestion + RPC Errors (5m)",
       "gridPos": {
         "x": 0,
         "y": 16,
@@ -111,18 +111,18 @@
       ],
       "targets": [
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
-          "legendFormat": "rx {{endpoint}}",
+          "expr": "sum by (source) (increase(mevbot_stream_events_observed_total[5m])) or vector(0)",
+          "legendFormat": "events {{source}}",
           "refId": "A"
         },
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_rx_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
-          "legendFormat": "err {{endpoint}}",
+          "expr": "sum by (provider, code_bucket) (increase(mevbot_rpc_errors_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m])) or vector(0)",
+          "legendFormat": "rpc errors {{provider}} {{code_bucket}}",
           "refId": "B"
         },
         {
-          "expr": "sum by (endpoint) (increase(mevbot_mempool_reconnects_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\",endpoint=~\"$endpoint\"}[5m]))",
-          "legendFormat": "reconnects {{endpoint}}",
+          "expr": "sum(increase(mevbot_sim_fail_total{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}[5m])) or vector(0)",
+          "legendFormat": "sim_fail_total",
           "refId": "C"
         }
       ]
@@ -165,6 +165,83 @@
         "y": 16,
         "w": 6,
         "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count({__name__=~\"mevbot_.*\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present: Target Up (mev-bot)",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(up{job=\"mev-bot\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present: Exporter Live (s)",
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present: mevbot_* Count",
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 4
       },
       "targets": [
         {
@@ -282,7 +359,12 @@
   "uid": "mempool-ingestion",
   "refresh": "30s",
   "tags": [
-    "canonical",
-    "mempool"
+    "golden",
+    "deep-dive",
+    "mempool",
+    "execution",
+    "rpc",
+    "evm",
+    "sol"
   ]
 }

@@ -53,11 +53,17 @@ Fork mode (later):
   - `mevbot_sim_fail_total`
   - `mevbot_tx_revert_total`
 - RPC/Health:
-  - `mevbot_rpc_latency_seconds` (histogram)
+  - `mevbot_rpc_latency_seconds{provider,method}` (histogram)
   - `mevbot_rpc_errors_total{provider,code_bucket}`
   - `mevbot_head_lag_blocks`
   - `mevbot_slot_lag`
   - `mevbot_state` (enum gauge: `UNKNOWN=0, PAUSED=1, READY=2, TRADING=3, DEGRADED=4, PANIC=5`)
+
+RPC latency freshness:
+- API runs a periodic instrumented RPC ping (`eth_blockNumber`) so latency histograms stay populated even when idle.
+- Env knobs:
+  - `RPC_PING_INTERVAL_S` (default `30`)
+  - `RPC_PING_TIMEOUT_S` (default `5`)
 
 Example:
 ```bash
@@ -114,7 +120,8 @@ Prometheus Multiprocess Mode
 
 How to switch chains
 - Edit `.env.runtime` and set `CHAIN=<sepolia|amoy|mainnet|polygon>`.
-- Optionally set `CHAIN_ID` if you need a non-default chain id.
+- Do not set `CHAIN_ID` in runtime env. Chain ID is resolved from `config/chains.yaml` and validated against RPC `eth_chainId`.
+- If runtime sees a chain-id mismatch, bot transitions to `DEGRADED/PAUSED`, sets `last_transition_error=chain_id_mismatch`, and exposes expected/actual values in `/status`.
 
 ## Chain Profiles (YAML Templates)
 
@@ -180,10 +187,19 @@ This is a standalone operator bot and does not modify trading code paths.
   - `DISCORD_OPERATOR_STATUS_REFRESH_S` (default `45`)
   - `METRICS_SCRAPE_URL` (optional; if unset, metrics fields show `—`)
   - `OPERATOR_STATE_FILE` (default `ops/operator_state.json`)
+  - `DISCORD_OPERATOR_ALLOWED_USER_IDS` (comma-separated)
+  - `DISCORD_OPERATOR_ALLOWED_ROLE_IDS` (comma-separated)
+  - `DISCORD_OPERATOR_ALLOWED_CHANNEL_IDS` (comma-separated)
+  - `DISCORD_OPERATOR_DEFAULT_OWNER_ID` (dev fallback owner, default `798402164800225281`)
+
+Auth defaults:
+- If allowlists are set, policy is enforced from those env vars.
+- If none are set, policy is `administrator OR operator owner`.
+- In `MODE=development|dev|paper|dryrun|test`, owner defaults to `DISCORD_OPERATOR_DEFAULT_OWNER_ID` for safe dev usability.
 
 ### Run locally
 ```bash
-python -m bot.ops.discord_operator
+python -m ops.discord_operator
 ```
 
 ### Run in docker (example)
@@ -194,7 +210,7 @@ docker compose run --rm \
   -e DISCORD_OPERATOR_AUDIT_CHANNEL_ID \
   -e DISCORD_OPERATOR_STATUS_CHANNEL_ID \
   -e DISCORD_OPERATOR_STATUS_REFRESH_S=45 \
-  mev-bot python -m bot.ops.discord_operator
+  mev-bot python -m ops.discord_operator
 ```
 
 Using the compose service:

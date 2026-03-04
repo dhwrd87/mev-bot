@@ -8,34 +8,28 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Set, Tuple
-from urllib.parse import urlparse
 
 import aiohttp
 from redis.asyncio import Redis
 
 from bot.candidate.schema import Candidate
 from bot.core.chain_config import get_chain_config
+from bot.net.instrumented_rpc import AsyncInstrumentedRpcClient
 from bot.core.telemetry import (
     canonical_metric_labels,
     candidate_pipeline_seen_total,
     candidate_pipeline_detected_total,
     candidate_pipeline_decisions_total,
+    pipeline_detector_hit_total,
+    pipeline_detector_miss_total,
+    pipeline_candidates_emitted_total,
 )
 from ops.metrics import (
     record_opportunity_attempted,
     record_opportunity_filled,
     record_opportunity_filtered,
     record_opportunity_seen,
-    record_rpc_latency,
 )
-
-
-def _provider_name(url: str) -> str:
-    try:
-        h = urlparse(url).hostname
-        return str(h or "rpc")
-    except Exception:
-        return "rpc"
 from bot.sim.base import CandidateSimulator
 from bot.sim.fork import ForkSimulator
 from bot.sim.heuristic import HeuristicSimulator
@@ -67,10 +61,14 @@ SIM_MODE = os.getenv("SIM_MODE", "heuristic").strip().lower()
 _CHAIN_CFG = get_chain_config()
 _CHAIN_LABELS = canonical_metric_labels(chain=_CHAIN_CFG.chain, chain_family=os.getenv("CHAIN_FAMILY", "evm"))
 RPC_URLS = [_CHAIN_CFG.rpc_http] + _CHAIN_CFG.rpc_http_backups
-_RPC_IDX = 0
-_LAST_RPC_TS = 0.0
 _DAILY_LOSS_ACC = 0.0
 OppSink = Optional[Callable[[dict], Awaitable[None]]]
+_RPC_CLIENT = AsyncInstrumentedRpcClient(
+    urls=RPC_URLS,
+    family=os.getenv("CHAIN_FAMILY", "evm"),
+    chain=_CHAIN_CFG.chain,
+    rate_limit_rps=PIPELINE_RPC_RPS,
+)
 
 
 def _load_allowlist(path: str) -> Set[str]:
@@ -138,44 +136,18 @@ async def _ensure_group(r: Redis) -> None:
             log.debug("xgroup_create notice: %s", e)
 
 
-async def _rate_limit_rpc() -> None:
-    global _LAST_RPC_TS
-    now = time.monotonic()
-    min_interval = 1.0 / PIPELINE_RPC_RPS
-    sleep_s = (_LAST_RPC_TS + min_interval) - now
-    if sleep_s > 0:
-        await asyncio.sleep(sleep_s)
-    _LAST_RPC_TS = time.monotonic()
-
-
 async def _fetch_tx(sess: aiohttp.ClientSession, tx_hash: str) -> Dict[str, Any] | None:
-    global _RPC_IDX
-    if not tx_hash or not RPC_URLS:
+    if not tx_hash:
         return None
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionByHash", "params": [tx_hash]}
-    for i in range(len(RPC_URLS)):
-        await _rate_limit_rpc()
-        url = RPC_URLS[(_RPC_IDX + i) % len(RPC_URLS)]
-        t0 = time.perf_counter()
-        try:
-            async with sess.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                record_rpc_latency(
-                    family=os.getenv("CHAIN_FAMILY", "evm"),
-                    chain=_CHAIN_CFG.chain,
-                    provider=_provider_name(url),
-                    seconds=max(0.0, time.perf_counter() - t0),
-                )
-                if resp.status == 429:
-                    await asyncio.sleep(0.2 + i * 0.1)
-                    continue
-                data = await resp.json()
-                result = data.get("result")
-                if result:
-                    _RPC_IDX = (_RPC_IDX + 1) % len(RPC_URLS)
-                    return result
-        except Exception:
-            continue
-    return None
+    res = await _RPC_CLIENT.call(
+        sess,
+        method="eth_getTransactionByHash",
+        params=[tx_hash],
+        timeout_s=5.0,
+    )
+    if not res.ok:
+        return None
+    return res.result if isinstance(res.result, dict) else None
 
 
 def _detector_match(to_addr: str, value_wei: int, selector: str, allowlist: Set[str]) -> tuple[bool, str]:
@@ -329,6 +301,10 @@ async def _run_pipeline(opp_sink: OppSink = None) -> None:
                     selector = selector or ""
 
                     matched, venue_tag = _detector_match(to_addr or "", value_wei, selector, allowlist)
+                    if matched:
+                        pipeline_detector_hit_total.labels(**_CHAIN_LABELS).inc()
+                    else:
+                        pipeline_detector_miss_total.labels(**_CHAIN_LABELS, reason="detector_miss").inc()
 
                     estimated_gas = _to_int(tx.get("gas")) if tx else 21000
                     edge_bps = (max(0.0, min(100.0, (gas_wei / 1e9) / 5.0 + (10.0 if matched else 0.0))))
@@ -396,6 +372,8 @@ async def _run_pipeline(opp_sink: OppSink = None) -> None:
 
                     candidate.decision = decision
                     candidate.reject_reason = reason
+                    if decision == "ACCEPT":
+                        pipeline_candidates_emitted_total.labels(**_CHAIN_LABELS).inc()
                     candidate_pipeline_decisions_total.labels(
                         **_CHAIN_LABELS,
                         decision=decision,

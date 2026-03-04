@@ -1,14 +1,19 @@
 {
   "id": null,
   "uid": "execution-overview",
-  "title": "30 Execution",
+  "title": "10 Execution Overview",
   "schemaVersion": 39,
   "version": 3,
   "timezone": "browser",
   "refresh": "30s",
   "tags": [
-    "canonical",
-    "execution"
+    "golden",
+    "deep-dive",
+    "execution",
+    "rpc",
+    "risk",
+    "evm",
+    "sol"
   ],
   "templating": {
     "list": [
@@ -235,6 +240,83 @@
         "y": 16,
         "w": 6,
         "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count({__name__=~\"mevbot_.*\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present: Target Up (mev-bot)",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(up{job=\"mev-bot\"}) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present: Exporter Live (s)",
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(mevbot_heartbeat_ts{family=~\"$family\",chain=~\"$chain\",network=~\"$network\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metrics Present: mevbot_* Count",
+      "gridPos": {
+        "x": 16,
+        "y": 21,
+        "w": 8,
+        "h": 4
       },
       "targets": [
         {

@@ -81,7 +81,7 @@ class RpcClient:
             return "4xx"
         return "rpc_error"
 
-    async def _call_with_fallback(self, fn: Callable[[Web3], T]) -> T:
+    async def _call_with_fallback(self, fn: Callable[[Web3], T], *, method: str = "unknown") -> T:
         if not self.w3s:
             raise RuntimeError("No RPC HTTP endpoints configured")
         backoff = 0.2
@@ -96,6 +96,7 @@ class RpcClient:
                     family=os.getenv("CHAIN_FAMILY", "evm"),
                     chain=os.getenv("CHAIN", "unknown"),
                     provider=_provider_name(self.urls[idx] if idx < len(self.urls) else f"rpc_{idx}"),
+                    method=method,
                     seconds=max(0.0, time.perf_counter() - t0),
                 )
                 self._idx = (idx + 1) % len(self.w3s)
@@ -106,6 +107,7 @@ class RpcClient:
                     family=os.getenv("CHAIN_FAMILY", "evm"),
                     chain=os.getenv("CHAIN", "unknown"),
                     provider=provider,
+                    method=method,
                     seconds=max(0.0, time.perf_counter() - t0),
                 )
                 record_rpc_error(provider=provider, code_bucket=self._error_bucket(e))
@@ -124,7 +126,10 @@ class RpcClient:
             await self._lim()
             self.calls["eth_getTransactionByHash"] += 1
             try:
-                return await self._call_with_fallback(lambda w3: w3.eth.get_transaction(tx_hash))
+                return await self._call_with_fallback(
+                    lambda w3: w3.eth.get_transaction(tx_hash),
+                    method="eth_getTransactionByHash",
+                )
             except Exception:
                 return None
 
@@ -133,7 +138,7 @@ class RpcClient:
         if v is not None: return v
         async with self.sem:
             await self._lim(); self.calls["eth_gasPrice"] += 1
-            v = await self._call_with_fallback(lambda w3: w3.eth.gas_price)
+            v = await self._call_with_fallback(lambda w3: w3.eth.gas_price, method="eth_gasPrice")
             self.ttl_gas.set(int(v))
             return int(v)
 
@@ -142,7 +147,7 @@ class RpcClient:
         if v is not None: return v
         async with self.sem:
             await self._lim(); self.calls["eth_block"] += 1
-            b = await self._call_with_fallback(lambda w3: w3.eth.get_block("latest"))
+            b = await self._call_with_fallback(lambda w3: w3.eth.get_block("latest"), method="eth_getBlockByNumber")
             self.ttl_block.set(b)
             return b
 
@@ -153,6 +158,9 @@ class RpcClient:
         if v is not None: return v
         async with self.sem:
             await self._lim(); self.calls["eth_getTransactionCount"] += 1
-            n = await self._call_with_fallback(lambda w3: w3.eth.get_transaction_count(addr))
+            n = await self._call_with_fallback(
+                lambda w3: w3.eth.get_transaction_count(addr),
+                method="eth_getTransactionCount",
+            )
             self.ttl_nonce[key].set(int(n))
             return int(n)

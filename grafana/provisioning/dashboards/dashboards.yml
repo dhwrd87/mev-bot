@@ -20,25 +20,25 @@ providers:
     options:
       path: /var/lib/grafana/dashboards/10-mempool
       foldersFromFilesStructure: false
+  - name: "MEV 10 Execution"
+    orgId: 1
+    folder: "10 Execution"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/10-execution
+      foldersFromFilesStructure: false
   - name: "MEV 20 Strategy"
     orgId: 1
-    folder: "20 Strategy Analytics"
+    folder: "20 Strategy"
     type: file
     disableDeletion: false
     editable: true
     updateIntervalSeconds: 30
     options:
       path: /var/lib/grafana/dashboards/20-strategy
-      foldersFromFilesStructure: false
-  - name: "MEV 30 Execution"
-    orgId: 1
-    folder: "30 Execution"
-    type: file
-    disableDeletion: false
-    editable: true
-    updateIntervalSeconds: 30
-    options:
-      path: /var/lib/grafana/dashboards/30-execution
       foldersFromFilesStructure: false
   - name: "MEV 90 Infra"
     orgId: 1

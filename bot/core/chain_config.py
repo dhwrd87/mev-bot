@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -29,6 +30,18 @@ class ChainConfig:
 
 
 _CACHE: ChainConfig | None = None
+logger = logging.getLogger(__name__)
+
+
+def _is_test_runtime() -> bool:
+    mode = str(os.getenv("MODE", "")).strip().lower()
+    if mode in {"test", "testing"}:
+        return True
+    if str(os.getenv("TEST_MODE", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    return False
 
 
 def _csv(v: str | None) -> List[str]:
@@ -179,7 +192,15 @@ def get_chain_config() -> ChainConfig:
     if not rpc:
         raise ValueError(f"No HTTP RPC endpoints configured for CHAIN={chain}")
 
-    chain_id = int(os.getenv("CHAIN_ID") or c.get("chain_id"))
+    env_chain_id = str(os.getenv("CHAIN_ID", "")).strip()
+    if env_chain_id and not _is_test_runtime():
+        logger.warning(
+            "Ignoring CHAIN_ID=%s from env in runtime; using config/chains.yaml chain_id instead.",
+            env_chain_id,
+        )
+    chain_id = int(c.get("chain_id", 0))
+    if env_chain_id and _is_test_runtime():
+        chain_id = int(env_chain_id)
     cfg = ChainConfig(
         chain=chain,
         chain_id=chain_id,

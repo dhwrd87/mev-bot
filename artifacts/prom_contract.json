@@ -1,0 +1,2371 @@
+{
+  "generated_at": 1772592548,
+  "include_regex": "^(mevbot_.*|up|scrape_.*)$",
+  "metric_count": 114,
+  "metrics": {
+    "mevbot_attempts_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_attempts_total": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_blocked_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_blocked_by_operator_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason",
+        "scope"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other",
+          "scope": "unknown"
+        }
+      ]
+    },
+    "mevbot_bot_state": {
+      "label_keys": [
+        "instance",
+        "job",
+        "state"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "state": "BOOTING"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "state": "SYNCING"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "state": "READY"
+        }
+      ]
+    },
+    "mevbot_bot_state_transitions_total": {
+      "label_keys": [
+        "from_state",
+        "instance",
+        "job",
+        "reason",
+        "to_state"
+      ],
+      "samples": [
+        {
+          "from_state": "PAUSED",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "dex_reconfigure_ready",
+          "to_state": "READY"
+        },
+        {
+          "from_state": "READY",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "dex_reconfigure_pause",
+          "to_state": "PAUSED"
+        },
+        {
+          "from_state": "PAUSED",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "chain_switch_syncing:EVM:base",
+          "to_state": "SYNCING"
+        }
+      ]
+    },
+    "mevbot_bot_state_value": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_chain_head": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "sepolia.gateway.tenderly.co"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet",
+          "provider": "base-rpc.publicnode.com"
+        }
+      ]
+    },
+    "mevbot_chain_info": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_chain_slot": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "sepolia.gateway.tenderly.co"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet",
+          "provider": "base-rpc.publicnode.com"
+        }
+      ]
+    },
+    "mevbot_desired_chain_info": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_desired_context_info": {
+      "label_keys": [
+        "chain",
+        "chain_target",
+        "family",
+        "instance",
+        "job",
+        "mode",
+        "network",
+        "network_target",
+        "state"
+      ],
+      "samples": [
+        {
+          "chain_target": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "unknown",
+          "network_target": "mainnet",
+          "state": "UNKNOWN"
+        },
+        {
+          "chain_target": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "paper",
+          "network_target": "mainnet",
+          "state": "TRADING"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "PAPER",
+          "network": "mainnet",
+          "state": "TRADING"
+        }
+      ]
+    },
+    "mevbot_desired_mode_info": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_desired_state_value": {
+      "label_keys": [
+        "chain",
+        "chain_target",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "network_target"
+      ],
+      "samples": [
+        {
+          "chain_target": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network_target": "mainnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_dex_build_fail_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other"
+        }
+      ]
+    },
+    "mevbot_dex_quote_fail_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other"
+        },
+        {
+          "chain": "base",
+          "dex": "univ2_default",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet",
+          "reason": "other"
+        },
+        {
+          "chain": "base",
+          "dex": "univ3_default",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet",
+          "reason": "other"
+        }
+      ]
+    },
+    "mevbot_dex_quote_latency_seconds_bucket": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.001",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.005",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.01",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_quote_latency_seconds_count": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_quote_latency_seconds_sum": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_quote_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_route_hops_bucket": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "1.0",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "2.0",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "3.0",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_route_hops_count": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_route_hops_sum": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_dex_sim_fail_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other"
+        }
+      ]
+    },
+    "mevbot_dex_tx_detected_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_drawdown_usd": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_effective_chain_info": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_effective_mode_info": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_effective_state_value": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_fees_total_usd": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_flashloan_fee_est_usd_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        }
+      ]
+    },
+    "mevbot_flashloan_used_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        }
+      ]
+    },
+    "mevbot_head": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_head_lag_blocks": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "sepolia.gateway.tenderly.co"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet",
+          "provider": "base-rpc.publicnode.com"
+        }
+      ]
+    },
+    "mevbot_heartbeat_ts": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown",
+          "strategy": "default"
+        },
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "ethereum-sepolia-rpc.publicnode.com",
+          "strategy": "default"
+        },
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "sepolia.gateway.tenderly.co",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_lag": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_mempool_tpm": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_mempool_tpm_legacy": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_mempool_tps": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_mempool_tps_legacy": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_mode_outcomes_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "mode",
+        "network",
+        "outcome"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "paper",
+          "network": "testnet",
+          "outcome": "virtual_fill"
+        }
+      ]
+    },
+    "mevbot_new_pairs_seen_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_opportunities_attempted_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_opportunities_executed_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "mode",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "dryrun",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_opportunities_filled_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_opportunities_rejected_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_opportunities_seen_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_opportunities_simulated_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "outcome",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "outcome": "ok",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_opportunity_queue_depth": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_orchestrator_decisions_total": {
+      "label_keys": [
+        "instance",
+        "job",
+        "mode",
+        "reason"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "stealth",
+          "reason": "ok"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "stealth",
+          "reason": "risk_block"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "stealth",
+          "reason": "no_opp"
+        }
+      ]
+    },
+    "mevbot_pnl_realized_usd": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_relay_fail_total": {
+      "label_keys": [
+        "chain",
+        "instance",
+        "job",
+        "reason",
+        "relay"
+      ],
+      "samples": [
+        {
+          "chain": "any",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "rate_limit",
+          "relay": "any"
+        },
+        {
+          "chain": "any",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "fee",
+          "relay": "any"
+        },
+        {
+          "chain": "any",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "simulation",
+          "relay": "any"
+        }
+      ]
+    },
+    "mevbot_risk_allow_total": {
+      "label_keys": [
+        "chain",
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_risk_deny_total": {
+      "label_keys": [
+        "chain",
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_risk_watch_total": {
+      "label_keys": [
+        "chain",
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_router_best_dex_selected_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_best_selected_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_fanout_bucket": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "1.0",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "2.0",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "3.0",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_fanout_count": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_fanout_sum": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_quote_fanout_bucket": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "1.0",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "2.0",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "3.0",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_quote_fanout_count": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_quote_fanout_sum": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_router_quotes_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "result"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "result": "ok"
+        }
+      ]
+    },
+    "mevbot_rpc_429_ratio": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_rpc_circuit_breaker_open": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_rpc_circuit_breaker_trips_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_rpc_errors_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_rpc_errors_total": {
+      "label_keys": [
+        "chain",
+        "code_bucket",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "code_bucket": "other",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        }
+      ]
+    },
+    "mevbot_rpc_gettx_429_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_rpc_gettx_errors_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_rpc_gettx_ok_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_rpc_latency_seconds_bucket": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.01",
+          "network": "testnet",
+          "provider": "unknown"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.025",
+          "network": "testnet",
+          "provider": "unknown"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.05",
+          "network": "testnet",
+          "provider": "unknown"
+        }
+      ]
+    },
+    "mevbot_rpc_latency_seconds_count": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        }
+      ]
+    },
+    "mevbot_rpc_latency_seconds_sum": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        }
+      ]
+    },
+    "mevbot_rpc_rate_limit_waits_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_runtime_context_info": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "mode",
+        "network",
+        "state"
+      ],
+      "samples": [
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "development",
+          "network": "mainnet",
+          "state": "READY"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "development",
+          "network": "testnet",
+          "state": "SYNCING"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "mode": "UNKNOWN",
+          "network": "mainnet",
+          "state": "READY"
+        }
+      ]
+    },
+    "mevbot_runtime_state_value": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_sell_sim_fail_total": {
+      "label_keys": [
+        "chain",
+        "instance",
+        "job",
+        "reason"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "reason": "other"
+        }
+      ]
+    },
+    "mevbot_sim_bundle_success_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_sim_bundle_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_sim_fail_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_sim_fail_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_sim_pass_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_sim_single_success_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_sim_single_total": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_sims_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_slot_lag": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "provider"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "unknown"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "provider": "sepolia.gateway.tenderly.co"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet",
+          "provider": "base-rpc.publicnode.com"
+        }
+      ]
+    },
+    "mevbot_state": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        },
+        {
+          "chain": "base",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "mainnet"
+        }
+      ]
+    },
+    "mevbot_stealth_decisions_total": {
+      "label_keys": [
+        "decision",
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "decision": "go",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        },
+        {
+          "decision": "no_go",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_stealth_flags_count": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "mevbot_stream_events_observed_total": {
+      "label_keys": [
+        "instance",
+        "job",
+        "source",
+        "stream"
+      ],
+      "samples": [
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "source": "api_probe",
+          "stream": "mempool:pending:txs"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "source": "api_probe",
+          "stream": "mempool:evm:base:pending:txs"
+        }
+      ]
+    },
+    "mevbot_triarb_compute_seconds_bucket": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.001",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.005",
+          "network": "testnet"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.01",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_triarb_compute_seconds_count": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_triarb_compute_seconds_sum": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_triarb_cycles_emitted_total": {
+      "label_keys": [
+        "chain",
+        "dex_path",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex_path": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_triarb_cycles_evaluated_total": {
+      "label_keys": [
+        "chain",
+        "dex_path",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "result"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex_path": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "result": "ok"
+        }
+      ]
+    },
+    "mevbot_tx_confirm_latency_seconds_bucket": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "le",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "0.5",
+          "network": "testnet",
+          "strategy": "default"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "1.0",
+          "network": "testnet",
+          "strategy": "default"
+        },
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "le": "2.0",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_tx_confirm_latency_seconds_count": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_tx_confirm_latency_seconds_sum": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_tx_confirmed_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_tx_errors_10m": {
+      "label_keys": [],
+      "samples": []
+    },
+    "mevbot_tx_failed_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_tx_revert_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other"
+        }
+      ]
+    },
+    "mevbot_tx_sent_by_dex_type_total": {
+      "label_keys": [
+        "chain",
+        "dex",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "type"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "type": "unknown"
+        }
+      ]
+    },
+    "mevbot_tx_sent_total": {
+      "label_keys": [
+        "chain",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "strategy"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "strategy": "default"
+        }
+      ]
+    },
+    "mevbot_xarb_opportunities_total": {
+      "label_keys": [
+        "chain",
+        "dex_pair",
+        "family",
+        "instance",
+        "job",
+        "network"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex_pair": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet"
+        }
+      ]
+    },
+    "mevbot_xarb_rejected_total": {
+      "label_keys": [
+        "chain",
+        "dex_pair",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "reason"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex_pair": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "reason": "other"
+        }
+      ]
+    },
+    "mevbot_xarb_scans_total": {
+      "label_keys": [
+        "chain",
+        "dex_pair",
+        "family",
+        "instance",
+        "job",
+        "network",
+        "result"
+      ],
+      "samples": [
+        {
+          "chain": "sepolia",
+          "dex_pair": "unknown",
+          "family": "evm",
+          "instance": "mev-bot:9100",
+          "job": "mev-bot",
+          "network": "testnet",
+          "result": "ok"
+        }
+      ]
+    },
+    "scrape_duration_seconds": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        {
+          "instance": "mev-alertmanager:9093",
+          "job": "alertmanager"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "scrape_samples_post_metric_relabeling": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        {
+          "instance": "mev-alertmanager:9093",
+          "job": "alertmanager"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "scrape_samples_scraped": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        {
+          "instance": "mev-alertmanager:9093",
+          "job": "alertmanager"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "scrape_series_added": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        {
+          "instance": "mev-alertmanager:9093",
+          "job": "alertmanager"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    },
+    "up": {
+      "label_keys": [
+        "instance",
+        "job"
+      ],
+      "samples": [
+        {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        {
+          "instance": "mev-alertmanager:9093",
+          "job": "alertmanager"
+        },
+        {
+          "instance": "mev-bot:9100",
+          "job": "mev-bot"
+        }
+      ]
+    }
+  },
+  "prometheus_url": "http://prometheus:9090"
+}

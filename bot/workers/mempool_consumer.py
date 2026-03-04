@@ -12,6 +12,7 @@ from typing import Dict, Any, Tuple, List
 import aiohttp
 from redis.asyncio import Redis
 from bot.core.chain_config import get_chain_config
+from bot.net.instrumented_rpc import AsyncInstrumentedRpcClient
 from bot.storage.pg import (
     get_pool,
     ensure_mempool_samples_table,
@@ -45,6 +46,9 @@ from bot.core.telemetry import (
     rpc_circuit_breaker_open,
     rpc_429_ratio,
     dex_tx_detected_total,
+    pipeline_mempool_msgs_total,
+    pipeline_decode_ok_total,
+    pipeline_decode_fail_total,
 )
 
 # --- Config ---
@@ -56,7 +60,6 @@ REDIS_URL     = os.getenv("REDIS_URL",      "redis://redis:6379/0")
 _CHAIN_CFG = get_chain_config()
 _CHAIN_LABELS = canonical_metric_labels(chain=_CHAIN_CFG.chain, chain_family=os.getenv("CHAIN_FAMILY", "evm"))
 RPC_URLS = [_CHAIN_CFG.rpc_http] + _CHAIN_CFG.rpc_http_backups
-_RPC_IDX = 0
 
 CONCURRENCY   = int(os.getenv("MEMPOOL_CONCURRENCY", "10"))
 RECLAIM_IDLE  = int(os.getenv("MEMPOOL_RECLAIM_IDLE_MS", "60000"))   # 60s
@@ -128,6 +131,11 @@ class TokenBucket:
 
 
 _rpc_bucket = TokenBucket(RPC_RPS, RPC_BURST)
+_RPC_CLIENT = AsyncInstrumentedRpcClient(
+    urls=RPC_URLS,
+    family=os.getenv("CHAIN_FAMILY", "evm"),
+    chain=_CHAIN_CFG.chain,
+)
 
 # --- Redis bootstrap ---
 async def ensure_group(r: Redis) -> None:
@@ -188,7 +196,7 @@ def _decode_fields(fields: Dict[Any, Any]) -> Dict[str, Any]:
     return out
 
 async def fetch_tx(sess: aiohttp.ClientSession, tx_hash: str) -> Tuple[Dict[str, Any] | None, str | None, str | None, int | None, str | None]:
-    global _RPC_IDX, _circuit_open_until
+    global _circuit_open_until
     if not RPC_URLS:
         return None, "no_rpc", None, None, "No RPC endpoints configured"
     now = time.monotonic()
@@ -200,53 +208,48 @@ async def fetch_tx(sess: aiohttp.ClientSession, tx_hash: str) -> Tuple[Dict[str,
         rpc_rate_limit_waits_total.inc()
         await asyncio.sleep(wait_s)
 
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionByHash", "params": [tx_hash]}
-    backoff = 0.2
-    for i in range(len(RPC_URLS)):
-        url = RPC_URLS[(_RPC_IDX + i) % len(RPC_URLS)]
-        try:
-            async with sess.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                if resp.status == 429:
-                    rpc_gettx_429_total.inc()
-                    _stats["rpc429"] += 1
-                    _rpc_outcomes.append(1)
-                    ratio = float(sum(_rpc_outcomes)) / float(len(_rpc_outcomes))
-                    rpc_429_ratio.set(ratio)
-                    if len(_rpc_outcomes) >= max(10, RPC_429_WINDOW // 2) and ratio > RPC_429_THRESHOLD:
-                        window_len = len(_rpc_outcomes)
-                        _circuit_open_until = time.monotonic() + RPC_429_PAUSE_SEC
-                        _stats["circuit_trips"] += 1
-                        _stats["circuit_open_s"] = RPC_429_PAUSE_SEC
-                        rpc_circuit_breaker_trips_total.inc()
-                        rpc_circuit_breaker_open.set(1)
-                        _rpc_outcomes.clear()
-                        log.warning(
-                            "rpc circuit breaker opened ratio=%.3f threshold=%.3f window=%d pause_s=%.1f",
-                            ratio,
-                            RPC_429_THRESHOLD,
-                            window_len,
-                            RPC_429_PAUSE_SEC,
-                        )
-                    await asyncio.sleep(backoff + 0.1 * i)
-                    backoff = min(backoff * 2, 2.0)
-                    return None, "rate_limited", url, 429, "HTTP 429"
-                _rpc_outcomes.append(0)
-                ratio = float(sum(_rpc_outcomes)) / float(len(_rpc_outcomes))
-                rpc_429_ratio.set(ratio)
-                data = await resp.json()
-                result = data.get("result")
-                if result:
-                    _RPC_IDX = (_RPC_IDX + 1) % len(RPC_URLS)
-                    rpc_gettx_ok_total.inc()
-                    log.debug("fetch_tx ok hash=%s to=%s", tx_hash, result.get("to"))
-                    return result, None, url, resp.status, None
-                msg = data.get("error", {}).get("message") if isinstance(data.get("error"), dict) else "no_result"
-                return None, "no_result", url, resp.status, str(msg)
-        except Exception as e:
-            rpc_gettx_errors_total.inc()
-            log.debug("RPC error for %s: %s", tx_hash, e)
-            return None, "rpc_exception", url, None, str(e)
-    return None, "no_result", RPC_URLS[0], None, "no result"
+    result = await _RPC_CLIENT.call(
+        sess,
+        method="eth_getTransactionByHash",
+        params=[tx_hash],
+        timeout_s=5.0,
+    )
+    if result.ok and isinstance(result.result, dict):
+        _rpc_outcomes.append(0)
+        ratio = float(sum(_rpc_outcomes)) / float(len(_rpc_outcomes))
+        rpc_429_ratio.set(ratio)
+        rpc_gettx_ok_total.inc()
+        log.debug("fetch_tx ok hash=%s to=%s", tx_hash, result.result.get("to"))
+        return result.result, None, result.endpoint, result.http_status, None
+
+    if result.http_status == 429 or result.error_type == "rate_limited":
+        rpc_gettx_429_total.inc()
+        _stats["rpc429"] += 1
+        _rpc_outcomes.append(1)
+        ratio = float(sum(_rpc_outcomes)) / float(len(_rpc_outcomes))
+        rpc_429_ratio.set(ratio)
+        if len(_rpc_outcomes) >= max(10, RPC_429_WINDOW // 2) and ratio > RPC_429_THRESHOLD:
+            window_len = len(_rpc_outcomes)
+            _circuit_open_until = time.monotonic() + RPC_429_PAUSE_SEC
+            _stats["circuit_trips"] += 1
+            _stats["circuit_open_s"] = RPC_429_PAUSE_SEC
+            rpc_circuit_breaker_trips_total.inc()
+            rpc_circuit_breaker_open.set(1)
+            _rpc_outcomes.clear()
+            log.warning(
+                "rpc circuit breaker opened ratio=%.3f threshold=%.3f window=%d pause_s=%.1f",
+                ratio,
+                RPC_429_THRESHOLD,
+                window_len,
+                RPC_429_PAUSE_SEC,
+            )
+        return None, "rate_limited", result.endpoint, 429, result.error_msg or "HTTP 429"
+
+    rpc_gettx_errors_total.inc()
+    _rpc_outcomes.append(0)
+    ratio = float(sum(_rpc_outcomes)) / float(len(_rpc_outcomes))
+    rpc_429_ratio.set(ratio)
+    return None, result.error_type or "no_result", result.endpoint, result.http_status, result.error_msg
 
 def looks_like_dex(tx: Dict[str, Any]) -> bool:
     to = tx.get("to")
@@ -272,9 +275,31 @@ async def _process_one(
     fields: Dict[Any, Any],
 ):
     async with sem:
+        pipeline_mempool_msgs_total.labels(**_CHAIN_LABELS).inc()
         try:
-            txh, ts_ms = _parse_entry(fields, entry_id)
-            decoded_fields = _decode_fields(fields)
+            try:
+                txh, ts_ms = _parse_entry(fields, entry_id)
+                decoded_fields = _decode_fields(fields)
+            except Exception as decode_err:
+                reason = "parse_error"
+                if isinstance(decode_err, KeyError):
+                    reason = "missing_field"
+                elif isinstance(decode_err, ValueError):
+                    reason = "bad_value"
+                pipeline_decode_fail_total.labels(**_CHAIN_LABELS, reason=reason).inc()
+                ts_from_id = _ts_ms_from_entry_id(str(entry_id)) or int(time.time() * 1000)
+                with contextlib.suppress(Exception):
+                    await insert_mempool_error(
+                        pool,
+                        ts_ms=int(ts_from_id),
+                        tx_hash=None,
+                        endpoint=None,
+                        error_type=f"decode_{reason}",
+                        error_msg=str(decode_err),
+                        http_status=None,
+                    )
+                raise
+            pipeline_decode_ok_total.labels(**_CHAIN_LABELS).inc()
             source_endpoint = decoded_fields.get("endpoint") or decoded_fields.get("source_endpoint")
 
             await insert_mempool_event(

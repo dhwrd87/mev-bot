@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.core.chain_config import get_chain_config
+from bot.net.instrumented_rpc import AsyncInstrumentedRpcClient
 from bot.storage.pg import (
     get_pool,
     ensure_candidates_table,
@@ -24,9 +25,7 @@ log = logging.getLogger("candidate-evaluator")
 EVAL_POLL_MS = int(os.getenv("EVAL_POLL_MS", "2000"))
 EVAL_TIMEOUT_S = float(os.getenv("EVAL_TIMEOUT_S", "900"))
 EVAL_BATCH_LIMIT = int(os.getenv("EVAL_BATCH_LIMIT", "100"))
-
-_RPC_IDX = 0
-
+_RPC_CLIENT: AsyncInstrumentedRpcClient | None = None
 
 def _to_int(v: Any) -> Optional[int]:
     if v is None:
@@ -40,23 +39,22 @@ def _to_int(v: Any) -> Optional[int]:
 
 
 async def _fetch_receipt(sess: aiohttp.ClientSession, tx_hash: str, rpc_urls: list[str]) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    global _RPC_IDX
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionReceipt", "params": [tx_hash]}
-    for i in range(len(rpc_urls)):
-        url = rpc_urls[(_RPC_IDX + i) % len(rpc_urls)]
-        try:
-            async with sess.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=6)) as resp:
-                if resp.status == 429:
-                    await asyncio.sleep(min(1.0 + i * 0.1, 2.0))
-                    continue
-                data = await resp.json()
-                result = data.get("result")
-                if result:
-                    _RPC_IDX = (_RPC_IDX + 1) % len(rpc_urls)
-                    return result, url
-        except Exception:
-            continue
-    return None, None
+    global _RPC_CLIENT
+    if _RPC_CLIENT is None:
+        _RPC_CLIENT = AsyncInstrumentedRpcClient(
+            urls=rpc_urls,
+            family=os.getenv("CHAIN_FAMILY", "evm"),
+            chain=get_chain_config().chain,
+        )
+    result = await _RPC_CLIENT.call(
+        sess,
+        method="eth_getTransactionReceipt",
+        params=[tx_hash],
+        timeout_s=6.0,
+    )
+    if result.ok and isinstance(result.result, dict):
+        return result.result, result.endpoint
+    return None, result.endpoint
 
 
 async def run() -> None:
@@ -72,6 +70,12 @@ async def run() -> None:
 
     connector = aiohttp.TCPConnector(keepalive_timeout=30, ttl_dns_cache=120)
     timeout = aiohttp.ClientTimeout(total=8)
+    global _RPC_CLIENT
+    _RPC_CLIENT = AsyncInstrumentedRpcClient(
+        urls=rpc_urls,
+        family=os.getenv("CHAIN_FAMILY", "evm"),
+        chain=cfg.chain,
+    )
 
     # in-memory schedule/backoff map keyed by candidate id
     state: Dict[int, Dict[str, float]] = {}

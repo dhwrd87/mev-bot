@@ -271,6 +271,36 @@ candidate_pipeline_decisions_total = Counter(
     "Candidate pipeline decisions",
     ["family", "chain", "network", "decision", "reason"]
 )
+pipeline_mempool_msgs_total = Counter(
+    "mevbot_mempool_msgs_total",
+    "Pipeline stage: mempool messages observed",
+    ["family", "chain", "network"],
+)
+pipeline_decode_ok_total = Counter(
+    "mevbot_decode_ok_total",
+    "Pipeline stage: decode success count",
+    ["family", "chain", "network"],
+)
+pipeline_decode_fail_total = Counter(
+    "mevbot_decode_fail_total",
+    "Pipeline stage: decode failure count",
+    ["family", "chain", "network", "reason"],
+)
+pipeline_detector_hit_total = Counter(
+    "mevbot_detector_hit_total",
+    "Pipeline stage: detector hit count",
+    ["family", "chain", "network"],
+)
+pipeline_detector_miss_total = Counter(
+    "mevbot_detector_miss_total",
+    "Pipeline stage: detector miss count",
+    ["family", "chain", "network", "reason"],
+)
+pipeline_candidates_emitted_total = Counter(
+    "mevbot_candidates_emitted_total",
+    "Pipeline stage: candidates emitted for downstream execution",
+    ["family", "chain", "network"],
+)
 
 rpc_gettx_ok_total = Counter("mevbot_rpc_gettx_ok_total","Successful eth_getTransactionByHash calls")
 rpc_gettx_errors_total = Counter("mevbot_rpc_gettx_errors_total","Failed eth_getTransactionByHash calls")

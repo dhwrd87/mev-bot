@@ -45,7 +45,12 @@ services:
               fi &&
               exec uvicorn bot.api.main:app --host 0.0.0.0 --port 8000'
     restart: unless-stopped
-    networks: [mevnet]
+    networks:
+        mevnet:
+          aliases: 
+            - mev-bot
+            - api
+
     secrets:
       - trader_pk
     healthcheck:
@@ -242,16 +247,18 @@ services:
   discord-operator:
     image: local/mev-bot:latest
     profiles: ["ops"]
-    command: bash -lc "python3 -m bot.ops.discord_operator"
+    command: bash -lc "python3 -m ops.discord_operator"
     env_file:
       - ../.env.runtime
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - DISCORD_OPERATOR_API_BASE=${DISCORD_OPERATOR_API_BASE:-http://mev-bot:8000}
-      - DISCORD_OPERATOR_STATUS_CHANNEL_ID=${DISCORD_OPERATOR_STATUS_CHANNEL_ID:-}
+      - DISCORD_OPERATOR_STATUS_CHANNEL_ID=${DISCORD_OPERATOR_STATUS_CHANNEL_ID}
+      - DISCORD_OPERATOR_AUDIT_CHANNEL_ID=${DISCORD_OPERATOR_AUDIT_CHANNEL_ID}
+      - DISCORD_OPERATOR_COMMAND_CHANNEL_ID=${DISCORD_OPERATOR_COMMAND_CHANNEL_ID}
       - DISCORD_OPERATOR_STATUS_REFRESH_S=${DISCORD_OPERATOR_STATUS_REFRESH_S:-45}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-mev_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-mev_bot}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mevbot}:${POSTGRES_PASSWORD:-mevbot_pw}@postgres:5432/${POSTGRES_DB:-mevbot}
     depends_on:
       mev-bot:
         condition: service_started

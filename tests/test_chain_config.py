@@ -2,6 +2,7 @@ import os
 import json
 import pytest
 
+import bot.core.chain_config as chain_config
 from bot.core.chain_config import get_chain_config, _reset_chain_config_cache_for_tests
 
 
@@ -69,6 +70,15 @@ def test_chain_id_env_override(monkeypatch):
     monkeypatch.setenv("CHAIN_ID", "12345")
     cfg = get_chain_config()
     assert cfg.chain_id == 12345
+
+
+def test_chain_id_env_override_ignored_outside_test_runtime(monkeypatch):
+    _reset_env(monkeypatch)
+    monkeypatch.setenv("CHAIN", "sepolia")
+    monkeypatch.setenv("CHAIN_ID", "12345")
+    monkeypatch.setattr(chain_config, "_is_test_runtime", lambda: False)
+    cfg = get_chain_config()
+    assert cfg.chain_id == 11155111
 
 
 def test_unsupported_chain(monkeypatch):

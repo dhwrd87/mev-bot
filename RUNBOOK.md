@@ -10,6 +10,13 @@
    - `rpc_http_selected`
    - `ws_endpoints_selected`
    - `ws_connected_endpoint`
+5. Chain-ID safety:
+   - Runtime chain id comes from `config/chains.yaml` only.
+   - Runtime ignores `CHAIN_ID` env override (test-only override is allowed under pytest).
+   - If RPC `eth_chainId` does not match configured chain id, status shows:
+     - `last_transition_error=chain_id_mismatch`
+     - `chain_id_expected`
+     - `chain_id_actual`
 
 ### Standard Chain Profiles
 - EVM mainnet/testnet profiles: `config/chains/evm/*.yaml`
@@ -69,7 +76,7 @@ smoke-stealth:
   - `DISCORD_WEBHOOK` (app alerts, optional; empty disables webhook publishing and logs `webhook_disabled`)
   - `ALERT_WEBHOOK` (Alertmanager relay)
 - Operator process is separate and optional (`discord-operator` service, `ops` profile).
-- Canonical operator implementation is `bot.ops.discord_operator`; the legacy `operator` compose service was removed.
+- Canonical operator implementation is `ops.discord_operator`; the legacy `operator` compose service was removed.
 
 ### Required env
 - `DISCORD_OPERATOR_TOKEN`
