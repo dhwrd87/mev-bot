@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import errno
 from typing import Optional
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
@@ -469,9 +470,16 @@ def start_metrics_http_server(port: Optional[int] = None) -> None:
     if _SERVER_STARTED:
         return
     p = int(port if port is not None else os.getenv("METRICS_PORT", "9100"))
-    start_http_server(p)
-    _SERVER_STARTED = True
-    log.info("metrics exporter listening on :%s/metrics", p)
+    try:
+        start_http_server(p)
+        _SERVER_STARTED = True
+        log.info("metrics exporter listening on :%s/metrics", p)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            _SERVER_STARTED = True
+            log.info("metrics exporter already listening on :%s/metrics; reusing existing server", p)
+            return
+        raise
 
 
 def seed_default_series(*, family: str, chain: str) -> None:

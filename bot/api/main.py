@@ -1442,10 +1442,72 @@ def attempts(limit: int = 10):
                 rows = conn.execute(
                     """
                     SELECT
+                      to_timestamp(a.ts_ms / 1000.0) AS ts,
+                      a.attempt_id, a.opportunity_id,
+                      COALESCE(a.meta->>'strategy', 'default') AS strategy,
+                      a.lifecycle_state::text AS status,
+                      COALESCE(a.reason_code, 'none') AS reason_code,
+                      COALESCE((a.meta->>'expected_pnl_usd')::double precision, s.pnl_est) AS expected_pnl_usd,
+                      (a.meta->>'gas_estimate')::double precision AS gas_estimate,
+                      CASE
+                        WHEN s.sim_ok IS NULL THEN NULL
+                        WHEN s.sim_ok THEN 'OK'
+                        ELSE 'FAIL'
+                      END AS sim_outcome,
+                      s.error_code AS sim_revert_reason,
+                      CASE
+                        WHEN a.lifecycle_state::text = 'BLOCKED' THEN NULL
+                        ELSE a.tx_hash
+                      END AS tx_hash,
+                      COALESCE(a.meta->>'chain', %s) AS chain,
+                      a.payload_hash, a.broadcasted_at, a.confirmed_at, a.receipt_block_number
+                    FROM opportunity_attempts a
+                    LEFT JOIN LATERAL (
+                      SELECT sim_ok, pnl_est, error_code, ts_ms, created_at
+                      FROM opportunity_simulations s
+                      WHERE s.opportunity_id = a.opportunity_id
+                      ORDER BY s.ts_ms DESC NULLS LAST, s.created_at DESC
+                      LIMIT 1
+                    ) s ON TRUE
+                    ORDER BY a.ts_ms DESC
+                    LIMIT %s
+                    """,
+                    (str(os.getenv("CHAIN", "unknown")), safe_limit),
+                ).fetchall()
+                items = []
+                for r in rows:
+                    items.append(
+                        {
+                            "ts": r[0].isoformat() if r[0] else None,
+                            "attempt_id": r[1],
+                            "opportunity_id": r[2],
+                            "strategy": r[3],
+                            "status": r[4],
+                            "reason_code": r[5],
+                            "expected_pnl_usd": float(r[6]) if r[6] is not None else None,
+                            "gas_estimate": float(r[7]) if r[7] is not None else None,
+                            "sim_outcome": r[8],
+                            "sim_revert_reason": r[9],
+                            "tx_hash": r[10],
+                            "chain": r[11],
+                            "payload_hash": r[12],
+                            "broadcasted_at": r[13].isoformat() if r[13] else None,
+                            "confirmed_at": r[14].isoformat() if r[14] else None,
+                            "receipt_block_number": int(r[15]) if r[15] is not None else None,
+                        }
+                    )
+                if items:
+                    return {"ok": True, "limit": safe_limit, "items": items}
+            except Exception:
+                pass
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT
                       COALESCE(broadcasted_at, created_at) AS ts,
                       attempt_id, opportunity_id, strategy, status, reason_code,
                       expected_pnl_usd, gas_estimate, sim_outcome, sim_revert_reason,
-                      tx_hash, chain
+                      tx_hash, chain, payload_hash, broadcasted_at, confirmed_at, receipt_block_number
                     FROM attempts
                     ORDER BY COALESCE(broadcasted_at, created_at) DESC
                     LIMIT %s
@@ -1468,6 +1530,10 @@ def attempts(limit: int = 10):
                             "sim_revert_reason": r[9],
                             "tx_hash": r[10],
                             "chain": r[11],
+                            "payload_hash": r[12],
+                            "broadcasted_at": r[13].isoformat() if r[13] else None,
+                            "confirmed_at": r[14].isoformat() if r[14] else None,
+                            "receipt_block_number": int(r[15]) if r[15] is not None else None,
                         }
                     )
                 return {"ok": True, "limit": safe_limit, "items": items}
@@ -1497,6 +1563,10 @@ def attempts(limit: int = 10):
                             "sim_revert_reason": None,
                             "tx_hash": None,
                             "chain": r[8] or str(os.getenv("CHAIN", "unknown")),
+                            "payload_hash": r[2],
+                            "broadcasted_at": None,
+                            "confirmed_at": None,
+                            "receipt_block_number": None,
                         }
                     )
                 return {"ok": True, "limit": safe_limit, "items": items}
@@ -1844,7 +1914,9 @@ def debug_db_stats():
 @app.get("/candidates")
 def list_candidates():
     q = """
-    SELECT id, ts_ms, tx_hash, kind, score, notes, created_at
+    SELECT
+      id, ts_ms, tx_hash, kind, score, notes, created_at,
+      decision, reject_reason, sim_ok
     FROM candidates
     ORDER BY created_at DESC
     LIMIT 50
@@ -1863,6 +1935,15 @@ def list_candidates():
                         "score": float(r[4]),
                         "notes": r[5] if isinstance(r[5], dict) else {},
                         "created_at": r[6].isoformat() if r[6] else None,
+                        # Compatibility fields used by integration/ops views.
+                        "opportunity_id": (
+                            (r[5] or {}).get("opportunity_id")
+                            if isinstance(r[5], dict)
+                            else None
+                        ) or r[2],
+                        "decision": r[7],
+                        "reason_code": r[8] or "none",
+                        "sim_ok": bool(r[9]) if r[9] is not None else None,
                     }
                     for r in rows
                 ],
@@ -1965,6 +2046,9 @@ def paper_report():
       (SELECT count(*) FROM o) AS outcomes_24h,
       (SELECT count(*) FROM o WHERE mined_block IS NOT NULL) AS mined_24h,
       (SELECT count(*) FROM o WHERE success IS TRUE) AS success_24h,
+      (SELECT count(*) FROM candidates WHERE created_at >= now() - interval '24 hours' AND UPPER(COALESCE(decision,'')) = 'ACCEPT') AS accepted_24h,
+      (SELECT count(*) FROM candidates WHERE created_at >= now() - interval '24 hours' AND UPPER(COALESCE(decision,'')) <> 'ACCEPT') AS rejected_24h,
+      (SELECT count(*) FROM candidates WHERE created_at >= now() - interval '24 hours' AND sim_ok IS NOT NULL) AS sims_24h,
       (SELECT avg(observed_after_sec) FROM o) AS avg_inclusion_delay_s,
       (SELECT avg(gas_used) FROM o WHERE gas_used IS NOT NULL) AS avg_gas_used,
       (SELECT avg(effective_gas_price) FROM o WHERE effective_gas_price IS NOT NULL) AS avg_effective_gas_price
@@ -1984,10 +2068,13 @@ def paper_report():
                 "outcomes_24h": outcomes_24h,
                 "mined_24h": mined_24h,
                 "success_24h": success_24h,
+                "accepted_24h": int(row[4] or 0),
+                "rejected_24h": int(row[5] or 0),
+                "sims_24h": int(row[6] or 0),
                 "success_rate": success_rate,
-                "avg_inclusion_delay_s": float(row[4]) if row[4] is not None else None,
-                "avg_gas_used": float(row[5]) if row[5] is not None else None,
-                "avg_effective_gas_price": float(row[6]) if row[6] is not None else None,
+                "avg_inclusion_delay_s": float(row[7]) if row[7] is not None else None,
+                "avg_gas_used": float(row[8]) if row[8] is not None else None,
+                "avg_effective_gas_price": float(row[9]) if row[9] is not None else None,
             }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"paper_report query failed: {e}") from e

@@ -175,6 +175,8 @@ class Relay:
 class TxMeta:
     chain: str
     public_rpc_url: Optional[str] = None  # optional public fallback
+    # Backward-compat flag used by some integration tests/callers.
+    sim_ok: Optional[bool] = None
 
 class PrivateOrderflowError(Exception):
     ...

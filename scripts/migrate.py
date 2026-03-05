@@ -4,15 +4,48 @@ import asyncpg
 
 LOCK_KEY = 8624001  # advisory lock key
 
-def db_dsn():
-    if os.getenv("DATABASE_URL"):
-        return os.getenv("DATABASE_URL")
-    user = os.getenv("POSTGRES_USER","mevbot")
-    pwd  = os.getenv("POSTGRES_PASSWORD","mevbot_pw")
-    db   = os.getenv("POSTGRES_DB","mevbot")
-    host = os.getenv("POSTGRES_HOST","127.0.0.1")
-    port = int(os.getenv("POSTGRES_PORT","5432"))
-    return f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
+def db_dsn_candidates():
+    out = []
+    explicit = os.getenv("DATABASE_URL")
+    if explicit:
+        out.append(explicit)
+
+    host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+    port = int(os.getenv("POSTGRES_PORT", "5432"))
+    user = os.getenv("POSTGRES_USER")
+    pwd = os.getenv("POSTGRES_PASSWORD")
+    db = os.getenv("POSTGRES_DB")
+    if user and pwd and db:
+        out.append(f"postgresql://{user}:{pwd}@{host}:{port}/{db}")
+
+    # Common local/container fallbacks used across this repo.
+    out.extend(
+        [
+            f"postgresql://mev_user:change_me@{host}:{port}/mev_bot",
+            f"postgresql://mevbot:mevbot_pw@{host}:{port}/mevbot",
+            "postgresql://mev_user:change_me@postgres:5432/mev_bot",
+            "postgresql://mevbot:mevbot_pw@postgres:5432/mevbot",
+        ]
+    )
+    # de-dupe preserving order
+    seen = set()
+    dedup = []
+    for d in out:
+        if d and d not in seen:
+            dedup.append(d)
+            seen.add(d)
+    return dedup
+
+
+async def connect_first_available():
+    errs = []
+    for dsn in db_dsn_candidates():
+        try:
+            conn = await asyncpg.connect(dsn)
+            return conn, dsn
+        except Exception as e:
+            errs.append(f"{dsn}: {e}")
+    raise RuntimeError("No working database DSN found.\n" + "\n".join(errs))
 
 async def ensure_meta(conn):
     await conn.execute("""
@@ -45,9 +78,9 @@ async def main():
     ap.add_argument("--baseline", help="mark a migration as applied without running it")
     args = ap.parse_args()
 
-    dsn = db_dsn()
-    conn = await asyncpg.connect(dsn)
+    conn, dsn = await connect_first_available()
     try:
+        print(f"Using database DSN: {dsn}", flush=True)
         # advisory lock to serialize
         await conn.execute("SELECT pg_advisory_lock($1)", LOCK_KEY)
         await ensure_meta(conn)
