@@ -22,6 +22,7 @@ from psycopg import errors as pg_errors
 
 from bot.core.chain_adapter import parse_chain_selection
 from bot.ops.status_card import StatusCardManager, StatusCardSnapshot, fmt_num
+from ops import discord_embeds as ui
 
 
 log = logging.getLogger("discord-operator")
@@ -221,13 +222,27 @@ class OperatorPanelView(discord.ui.View):
         ok, reason = await self.bot_ref._authorize_interaction(interaction, f"panel:{action}")
         if not ok:
             with contextlib.suppress(Exception):
-                await interaction.followup.send(f"not authorized: {reason}", ephemeral=True)
+                await interaction.followup.send(
+                    embed=ui.build_not_authorized_embed(
+                        reason=reason,
+                        policy=self.bot_ref._auth_policy_summary(),
+                        instance_id=self.bot_ref.instance_id,
+                    ),
+                    ephemeral=True,
+                )
             return False
         expected = self.bot_ref.panel_message_id
         msg = interaction.message
         if expected and (msg is None or int(msg.id) != int(expected)):
             with contextlib.suppress(Exception):
-                await interaction.followup.send("This panel is stale. Run /panel to refresh.", ephemeral=True)
+                await interaction.followup.send(
+                    embed=ui.build_not_authorized_embed(
+                        reason="stale_panel_message",
+                        policy="Run /panel to recreate or refresh the active control panel.",
+                        instance_id=self.bot_ref.instance_id,
+                    ),
+                    ephemeral=True,
+                )
             return False
         return True
 
@@ -369,15 +384,10 @@ class OperatorPanelView(discord.ui.View):
         try:
             resp = await self.bot_ref._api_get("/attempts", params={"limit": 10})
             rows = resp.get("items", []) if isinstance(resp, dict) else []
-            if not rows:
-                await interaction.followup.send("No attempts found.", ephemeral=True)
-            else:
-                lines = []
-                for r in rows[:10]:
-                    lines.append(
-                        f"[{r.get('ts','—')}] {r.get('strategy','none_selected')} • {r.get('status','UNKNOWN')} • {r.get('reason_code','none')}"
-                    )
-                await interaction.followup.send("\n".join(lines), ephemeral=True)
+            _, payload = await self.bot_ref._status_payload()
+            chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+            em = ui.build_last_embed(items=rows, limit=10, instance_id=self.bot_ref.instance_id, chain=chain)
+            await interaction.followup.send(embed=em, ephemeral=True)
         except Exception as e:
             self.bot_ref.last_error = str(e)
             log.exception("interaction_error action=panel_last10 instance_id=%s", self.bot_ref.instance_id)
@@ -391,13 +401,10 @@ class OperatorPanelView(discord.ui.View):
         try:
             resp = await self.bot_ref._api_get("/top", params={"window": "24h"})
             rows = resp.get("items", []) if isinstance(resp, dict) else []
-            if not rows:
-                await interaction.followup.send("No reject reasons.", ephemeral=True)
-            else:
-                await interaction.followup.send(
-                    "\n".join(f"{r.get('reason_code','none')}: {r.get('count',0)}" for r in rows[:10]),
-                    ephemeral=True,
-                )
+            _, payload = await self.bot_ref._status_payload()
+            chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+            em = ui.build_top_embed(window="24h", items=rows, instance_id=self.bot_ref.instance_id, chain=chain)
+            await interaction.followup.send(embed=em, ephemeral=True)
         except Exception as e:
             self.bot_ref.last_error = str(e)
             log.exception("interaction_error action=panel_top instance_id=%s", self.bot_ref.instance_id)
@@ -410,14 +417,10 @@ class OperatorPanelView(discord.ui.View):
             return
         try:
             resp = await self.bot_ref._api_get("/readiness")
-            if bool(resp.get("ok")):
-                await interaction.followup.send("readiness=ok", ephemeral=True)
-            else:
-                failed = resp.get("failed", [])
-                msg = "readiness=fail " + "; ".join(
-                    f"{c.get('name')}:{c.get('error','not_ok')}" for c in failed[:8]
-                )
-                await interaction.followup.send(msg, ephemeral=True)
+            _, payload = await self.bot_ref._status_payload()
+            chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+            em = ui.build_readiness_embed(payload=resp, instance_id=self.bot_ref.instance_id, chain=chain)
+            await interaction.followup.send(embed=em, ephemeral=True)
         except Exception as e:
             self.bot_ref.last_error = str(e)
             log.exception("interaction_error action=panel_readiness instance_id=%s", self.bot_ref.instance_id)
@@ -430,19 +433,10 @@ class OperatorPanelView(discord.ui.View):
             return
         try:
             resp = await self.bot_ref._api_get("/pipeline")
-            c = resp.get("counts_10m", {}) if isinstance(resp, dict) else {}
-            errs = resp.get("last_errors", {}) if isinstance(resp, dict) else {}
-            msg = (
-                "pipeline 10m: "
-                f"mempool={int(c.get('mempool_msgs_10m', 0))} "
-                f"decode_ok={int(c.get('decode_ok_10m', 0))} "
-                f"decode_fail={int(c.get('decode_fail_10m', 0))} "
-                f"hit={int(c.get('detector_hit_10m', 0))} "
-                f"miss={int(c.get('detector_miss_10m', 0))} "
-                f"emitted={int(c.get('candidates_emitted_10m', 0))}\n"
-                f"errors: decode={errs.get('decode') or '—'} | detector={errs.get('detector') or '—'} | candidate={errs.get('candidate') or '—'}"
-            )
-            await interaction.followup.send(msg[:1900], ephemeral=True)
+            _, payload = await self.bot_ref._status_payload()
+            chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+            em = ui.build_pipeline_embed(resp, instance_id=self.bot_ref.instance_id, chain=chain)
+            await interaction.followup.send(embed=em, ephemeral=True)
         except Exception as e:
             self.bot_ref.last_error = str(e)
             log.exception("interaction_error action=panel_pipeline instance_id=%s", self.bot_ref.instance_id)
@@ -456,6 +450,7 @@ class OperatorBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix=os.getenv("DISCORD_OPERATOR_PREFIX", "!"), intents=intents)
         self.api_base = os.getenv("MEVBOT_API_URL", os.getenv("DISCORD_OPERATOR_API_BASE", "http://mev-bot:8000")).rstrip("/")
+        self.database_url = str(os.getenv("DATABASE_URL", "")).strip()
         self.guild_id = int(os.getenv("DISCORD_OPERATOR_GUILD_ID", "0") or "0")
         self.audit_channel_id = int(os.getenv("DISCORD_OPERATOR_AUDIT_CHANNEL_ID", "0") or "0")
         self.command_channel_id = int(os.getenv("DISCORD_OPERATOR_COMMAND_CHANNEL_ID", "0") or "0")
@@ -515,6 +510,16 @@ class OperatorBot(commands.Bot):
             )
 
     async def setup_hook(self) -> None:
+        # Register trading visibility slash commands before command registry/sync.
+        try:
+            from ops.discord_commands_trading import setup as setup_trading
+
+            await setup_trading(self, self.database_url)
+            log.info("registered trading commands cog db_url_set=%s", bool(self.database_url))
+        except Exception as e:
+            log.exception("failed registering trading commands cog err=%s", e)
+            raise
+
         if self.panel_view is None:
             self.panel_view = OperatorPanelView(self)
         # Log command registry once at startup and detect accidental duplicate names.
@@ -884,20 +889,7 @@ class OperatorBot(commands.Bot):
         return r.json()
 
     def _build_panel_embed(self, payload: dict) -> discord.Embed:
-        em = discord.Embed(
-            title="MEV Operator Panel",
-            color=discord.Color.blurple(),
-            timestamp=datetime.now(timezone.utc),
-            description="Use buttons/select below. Actions return ephemeral acks.",
-        )
-        em.add_field(name="State", value=str(payload.get("state", "UNKNOWN")), inline=True)
-        em.add_field(name="Mode", value=str(payload.get("mode", "UNKNOWN")), inline=True)
-        em.add_field(name="Chain", value=str(payload.get("effective_chain", payload.get("chain", "unknown"))), inline=True)
-        em.add_field(name="Desired", value=f"{payload.get('desired_state','—')} / {payload.get('desired_mode','—')} / {payload.get('desired_chain','—')}", inline=False)
-        em.add_field(name="Runtime", value=f"head={payload.get('head','—')} lag={payload.get('lag_blocks','—')} switching={payload.get('switching_in_progress', False)}", inline=False)
-        em.add_field(name="Errors", value=f"last_transition_error={payload.get('last_transition_error') or '—'}", inline=False)
-        em.set_footer(text=f"instance_id={self.instance_id}")
-        return em
+        return ui.build_operator_status_embed(payload, instance_id=self.instance_id)
 
     async def _ensure_panel_message(self) -> discord.Message:
         if self.panel_view is None:
@@ -1256,6 +1248,8 @@ class OperatorBot(commands.Bot):
 
 def _build_bot() -> OperatorBot:
     bot = OperatorBot()
+    def _response(*, content: str | None = None, embed: discord.Embed | None = None) -> dict[str, Any]:
+        return {"content": content, "embed": embed}
 
     async def _chain_choices(prefix: str = "") -> list[str]:
         try:
@@ -1269,16 +1263,14 @@ def _build_bot() -> OperatorBot:
         except Exception:
             return []
 
-    async def handle_status() -> str:
-        text, _ = await bot._status_payload()
-        return text
+    async def handle_status() -> dict[str, Any]:
+        _, payload = await bot._status_payload()
+        return _response(embed=ui.build_operator_status_embed(payload, instance_id=bot.instance_id))
 
-    async def handle_help() -> str:
-        return (
-            "Commands: /ping /help /status /panel /diag /ops /pause /resume /killswitch /mode /chain "
-            "/last /top /strategies /pipeline /readiness /confirm_live\n"
-            "Safety: live mode requires /mode live then /confirm_live <token>."
-        )
+    async def handle_help() -> dict[str, Any]:
+        _, payload = await bot._status_payload()
+        chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+        return _response(embed=ui.build_help_embed(instance_id=bot.instance_id, chain=chain))
 
     async def handle_pause(actor: str, reason: str = "manual") -> str:
         out = await bot._apply_action(actor=actor, action="pause", value="true", reason=reason)
@@ -1300,11 +1292,16 @@ def _build_bot() -> OperatorBot:
         out = await bot._apply_action(actor=actor, action="chain_set", value=value, reason=reason)
         return f"ok {out['result']} op_id={out['op_id']}"
 
-    async def handle_ops(limit: int = 20) -> str:
+    async def handle_ops(limit: int = 20) -> dict[str, Any]:
         resp = await bot._api_get("/operator/events", params={"limit": max(1, min(int(limit), 50))})
         rows = resp.get("items", []) if isinstance(resp, dict) else []
+        _, payload = await bot._status_payload()
+        chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
         if not rows:
-            return "No operator actions found."
+            em = discord.Embed(title="✅ Operator Actions", color=discord.Color.blurple(), timestamp=datetime.now(timezone.utc))
+            em.description = "No operator actions found."
+            em.set_footer(text=ui.footer(bot.instance_id, chain))
+            return _response(embed=em)
         lines = []
         for row in rows[:20]:
             op_id = str(row.get("op_id", "—"))
@@ -1312,53 +1309,38 @@ def _build_bot() -> OperatorBot:
             applied = bool(row.get("applied", False))
             err = str(row.get("error", "") or "—")
             ts = str(row.get("ts", "") or row.get("created_at", "") or "—")
-            lines.append(f"{ts} op_id={op_id} action={action} applied={applied} error={err}")
-        return "\n".join(lines)
+            icon = "✅" if applied else "🟥"
+            lines.append(f"{icon} `{ui.fmt_ts(ts)}` `{op_id}` `{action}` err={err}")
+        em = discord.Embed(title="✅ Operator Actions", color=discord.Color.blurple(), timestamp=datetime.now(timezone.utc))
+        em.description = ui.compact_table_lines(lines, limit=20, max_chars=3500)
+        em.set_footer(text=ui.footer(bot.instance_id, chain))
+        return _response(embed=em)
 
-    async def handle_last(limit: int = 10) -> str:
+    async def handle_last(limit: int = 10) -> dict[str, Any]:
         resp = await bot._api_get("/attempts", params={"limit": max(1, min(int(limit), 50))})
         rows = resp.get("items", []) if isinstance(resp, dict) else []
-        if not rows:
-            return "No attempts found."
-        lines = []
-        for r in rows[:limit]:
-            ts = str(r.get("ts", "—"))
-            strategy = str(r.get("strategy", "none_selected"))
-            status = str(r.get("status", "UNKNOWN"))
-            reason = str(r.get("reason_code", "none"))
-            sim = str(r.get("sim_outcome", "—"))
-            tx_hash = str(r.get("tx_hash") or "")
-            bits = [f"[{ts}]", f"{strategy}", f"{status}", f"{reason}", f"sim={sim}"]
-            if tx_hash:
-                bits.append(f"tx={tx_hash[:10]}...")
-            lines.append(" • ".join(bits))
-        return "\n".join(lines)
+        _, payload = await bot._status_payload()
+        chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+        em = ui.build_last_embed(
+            items=rows,
+            limit=max(1, min(int(limit), 50)),
+            instance_id=bot.instance_id,
+            chain=chain,
+        )
+        return _response(embed=em)
 
-    async def handle_top(window: str = "24h") -> str:
+    async def handle_top(window: str = "24h") -> dict[str, Any]:
         resp = await bot._api_get("/top", params={"window": window})
         rows = resp.get("items", []) if isinstance(resp, dict) else []
-        if not rows:
-            return "No reject reasons."
-        return "\n".join(f"{r.get('reason_code','none')}: {r.get('count',0)}" for r in rows[:10])
+        _, payload = await bot._status_payload()
+        chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+        return _response(embed=ui.build_top_embed(window=window, items=rows, instance_id=bot.instance_id, chain=chain))
 
-    async def handle_pipeline() -> str:
+    async def handle_pipeline() -> dict[str, Any]:
         resp = await bot._api_get("/pipeline")
-        c = resp.get("counts_10m", {}) if isinstance(resp, dict) else {}
-        decode_reasons = resp.get("decode_fail_reasons", []) if isinstance(resp, dict) else []
-        miss_reasons = resp.get("detector_miss_reasons", []) if isinstance(resp, dict) else []
-        errs = resp.get("last_errors", {}) if isinstance(resp, dict) else {}
-        top_decode = ", ".join(f"{x.get('reason')}={x.get('count')}" for x in decode_reasons[:3]) or "none"
-        top_miss = ", ".join(f"{x.get('reason')}={x.get('count')}" for x in miss_reasons[:3]) or "none"
-        return (
-            f"pipeline window={resp.get('window','10m')} stream={resp.get('stream','—')}\n"
-            f"mempool={int(c.get('mempool_msgs_10m', 0))} decode_ok={int(c.get('decode_ok_10m', 0))} "
-            f"decode_fail={int(c.get('decode_fail_10m', 0))}\n"
-            f"detector_hit={int(c.get('detector_hit_10m', 0))} detector_miss={int(c.get('detector_miss_10m', 0))} "
-            f"candidates_emitted={int(c.get('candidates_emitted_10m', 0))}\n"
-            f"top_decode_fail={top_decode}\n"
-            f"top_detector_miss={top_miss}\n"
-            f"last_errors decode={errs.get('decode') or '—'} | detector={errs.get('detector') or '—'} | candidate={errs.get('candidate') or '—'}"
-        )
+        _, payload = await bot._status_payload()
+        chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+        return _response(embed=ui.build_pipeline_embed(resp, instance_id=bot.instance_id, chain=chain))
 
     async def handle_strategies() -> str:
         resp = await bot._api_get("/strategies")
@@ -1370,25 +1352,28 @@ def _build_bot() -> OperatorBot:
             for r in rows[:20]
         )
 
-    async def handle_readiness() -> str:
+    async def handle_readiness() -> dict[str, Any]:
         resp = await bot._api_get("/readiness")
-        if bool(resp.get("ok")):
-            return "readiness=ok"
-        failed = resp.get("failed", [])
-        return "readiness=fail " + "; ".join(f"{c.get('name')}:{c.get('error','not_ok')}" for c in failed[:8])
+        _, payload = await bot._status_payload()
+        chain = str(payload.get("effective_chain") or payload.get("chain") or "unknown")
+        return _response(embed=ui.build_readiness_embed(payload=resp, instance_id=bot.instance_id, chain=chain))
 
-    async def handle_report(window: str = "24h") -> str:
+    async def handle_report(window: str = "24h") -> dict[str, Any]:
         s = await bot._api_get("/status")
         t = await bot._api_get("/top", params={"window": window})
         a = await bot._api_get("/attempts", params={"limit": 10})
         top_items = t.get("items", []) if isinstance(t, dict) else []
         attempts = a.get("items", []) if isinstance(a, dict) else []
-        top_txt = ", ".join(f"{x.get('reason_code')}={x.get('count')}" for x in top_items[:3]) or "none"
-        return (
-            f"report window={window}\n"
-            f"desired={s.get('desired_state')}/{s.get('desired_mode')} chain={s.get('desired_chain')}\n"
-            f"effective={s.get('effective_state')} chain={s.get('effective_chain')} switching={s.get('switching_in_progress')}\n"
-            f"attempts_10={len(attempts)} top_rejects={top_txt}"
+        chain = str(s.get("effective_chain") or s.get("chain") or "unknown")
+        return _response(
+            embed=ui.build_report_embed(
+                window=window,
+                status=s,
+                top_items=top_items,
+                attempts_count=len(attempts),
+                instance_id=bot.instance_id,
+                chain=chain,
+            )
         )
 
     async def _slash_exec(
@@ -1405,11 +1390,25 @@ def _build_bot() -> OperatorBot:
             responded = True
             ok, reason = await bot._authorize_interaction(interaction, cmd_name)
             if not ok:
-                await interaction.followup.send(f"not authorized: {reason}", ephemeral=True)
+                await interaction.followup.send(
+                    embed=ui.build_not_authorized_embed(
+                        reason=reason,
+                        policy=bot._auth_policy_summary(),
+                        instance_id=bot.instance_id,
+                    ),
+                    ephemeral=True,
+                )
                 log.info("slash_denied command=%s user_id=%s channel_id=%s instance_id=%s responded=true", cmd_name, interaction.user.id if interaction.user else 0, interaction.channel_id, bot.instance_id)
                 return
             result = await handler()
-            await interaction.followup.send(f"{result}\ninstance_id={bot.instance_id}", ephemeral=ephemeral)
+            if isinstance(result, dict):
+                embed = result.get("embed")
+                content = result.get("content")
+                await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
+            elif isinstance(result, discord.Embed):
+                await interaction.followup.send(embed=result, ephemeral=ephemeral)
+            else:
+                await interaction.followup.send(f"{result}\ninstance_id={bot.instance_id}", ephemeral=ephemeral)
             log.info(
                 "slash_ok command=%s user_id=%s channel_id=%s instance_id=%s responded=true elapsed_ms=%s",
                 cmd_name,
@@ -1509,25 +1508,7 @@ def _build_bot() -> OperatorBot:
 
     @bot.tree.command(name="status", description="Show operator status")
     async def slash_status(interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            ok, reason = await bot._authorize_interaction(interaction, "status")
-            if not ok:
-                await interaction.followup.send(f"not authorized: {reason}", ephemeral=True)
-                return
-            _, payload = await bot._status_payload()
-            embed = bot._build_panel_embed(payload)
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception as e:
-            bot.last_error = str(e)
-            log.exception(
-                "slash_error command=status user_id=%s channel_id=%s instance_id=%s",
-                interaction.user.id if interaction.user else 0,
-                interaction.channel_id,
-                bot.instance_id,
-            )
-            with contextlib.suppress(Exception):
-                await interaction.followup.send(f"Command failed: {e}", ephemeral=True)
+        await _slash_exec(interaction, handle_status, ephemeral=True)
 
     @bot.tree.command(name="help", description="Show operator command help")
     async def slash_help(interaction: discord.Interaction):
@@ -1692,7 +1673,14 @@ def _build_bot() -> OperatorBot:
             await interaction.response.defer(ephemeral=True)
             ok, reason = await bot._authorize_interaction(interaction, cmd_name)
             if not ok:
-                await interaction.followup.send(f"not authorized: {reason}", ephemeral=True)
+                await interaction.followup.send(
+                    embed=ui.build_not_authorized_embed(
+                        reason=reason,
+                        policy=bot._auth_policy_summary(),
+                        instance_id=bot.instance_id,
+                    ),
+                    ephemeral=True,
+                )
                 return
             # Persist panel owner for default admin/owner auth policy (when no explicit allowlists).
             if not bot.allowed_user_ids and not bot.allowed_role_ids:

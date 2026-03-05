@@ -1,0 +1,548 @@
+{
+  "id": null,
+  "uid": "trading-overview",
+  "title": "MEV Bot - Trading Overview",
+  "tags": ["mev", "trading", "performance"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "expr": "increase(mevbot_executions_completed_total{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"}[1m]) > 0",
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "name": "Trade executions",
+        "titleFormat": "trade execution"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "chain",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(mevbot_executions_completed_total, chain)",
+        "includeAll": true,
+        "multi": true,
+        "customAllValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
+        }
+      },
+      {
+        "name": "mode",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(mevbot_executions_completed_total, mode)",
+        "includeAll": true,
+        "multi": true,
+        "customAllValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
+        }
+      },
+      {
+        "name": "strategy",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(mevbot_executions_completed_total, strategy)",
+        "includeAll": true,
+        "multi": true,
+        "customAllValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Row 1: Key Metrics",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Live P&L",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 1, "w": 6, "h": 6},
+      "transparent": true,
+      "targets": [
+        {"refId": "A", "expr": "sum(mevbot_cumulative_pnl_usd{chain=~\"$chain\",mode=~\"$mode\"})"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 0}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "sparkline": {"show": true},
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Trades Per Hour",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 6, "y": 1, "w": 6, "h": 6},
+      "transparent": true,
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mevbot_executions_completed_total{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"}[1h]))"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "sparkline": {"show": true},
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Win Rate Today",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 1, "w": 6, "h": 6},
+      "transparent": true,
+      "targets": [
+        {"refId": "A", "expr": "avg(mevbot_trade_win_rate_pct{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\",window=\"24h\"})"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "orange", "value": 30},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 70}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Active Strategies",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 18, "y": 1, "w": 6, "h": 6},
+      "transparent": true,
+      "targets": [
+        {"refId": "A", "expr": "count(mevbot_strategy_active_count{chain=~\"$chain\",mode=~\"$mode\"} > 0)"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "sparkline": {"show": true},
+        "textMode": "auto"
+      }
+    },
+
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Row 2: Decision Flow",
+      "gridPos": {"x": 0, "y": 7, "w": 24, "h": 1}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Opportunities Detected",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 8, "w": 10, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (type) (rate(mevbot_opportunities_detected_total{chain=~\"$chain\"}[5m]))",
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "right"}}
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "Strategy Decisions",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 10, "y": 8, "w": 7, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (mode) (mevbot_strategy_decisions_total{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"})",
+          "legendFormat": "{{mode}}"
+        }
+      ],
+      "options": {
+        "legend": {"displayMode": "list", "placement": "right"},
+        "pieType": "pie",
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Risk Rejections",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 17, "y": 8, "w": 7, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(mevbot_risk_rejections_total{chain=~\"$chain\",mode=~\"$mode\"}[5m]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineInterpolation": "stepBefore", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "right"}}
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Row 3: Execution",
+      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 1}
+    },
+    {
+      "id": 11,
+      "type": "bargauge",
+      "title": "Execution Outcomes",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 17, "w": 8, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (mevbot_executions_completed_total{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"})",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
+      }
+    },
+    {
+      "id": 12,
+      "type": "heatmap",
+      "title": "Execution Latency",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 8, "y": 17, "w": 8, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (le, mode, strategy) (rate(mevbot_execution_latency_ms_bucket{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"}[5m]))",
+          "format": "heatmap",
+          "legendFormat": "{{mode}}/{{strategy}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Recent Trades",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 16, "y": 17, "w": 8, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (mode, strategy, outcome) (mevbot_executions_completed_total{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"})",
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (mode, strategy) (mevbot_trade_realized_profit_usd_sum{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"})",
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (mode, strategy) (mevbot_trade_gas_cost_usd_sum{chain=~\"$chain\",mode=~\"$mode\"})",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {"id": "reduce", "options": {"reducers": ["lastNotNull"]}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"field": "Time", "desc": true}]}}
+      ]
+    },
+
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Row 4: Profitability",
+      "gridPos": {"x": 0, "y": 25, "w": 24, "h": 1}
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "P&L Over Time",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 26, "w": 8, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mevbot_cumulative_pnl_usd{chain=~\"$chain\",mode=~\"$mode\"}",
+          "legendFormat": "{{mode}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "custom": {"lineWidth": 2, "fillOpacity": 20, "lineInterpolation": "smooth"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "right"}}
+    },
+    {
+      "id": 16,
+      "type": "histogram",
+      "title": "Profit Distribution",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 8, "y": 26, "w": 8, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (le) (rate(mevbot_trade_realized_profit_usd_bucket{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"}[5m]))"
+        }
+      ],
+      "options": {"bucketCount": 20}
+    },
+    {
+      "id": 17,
+      "type": "xychart",
+      "title": "Gas Cost vs Profit",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 16, "y": 26, "w": 8, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "X",
+          "expr": "sum by (mode, strategy) (rate(mevbot_trade_gas_cost_usd_sum{chain=~\"$chain\",mode=~\"$mode\"}[5m]))",
+          "legendFormat": "gas {{mode}}/{{strategy}}"
+        },
+        {
+          "refId": "Y",
+          "expr": "sum by (mode, strategy) (rate(mevbot_trade_realized_profit_usd_sum{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"}[5m]))",
+          "legendFormat": "profit {{mode}}/{{strategy}}"
+        }
+      ]
+    },
+
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Row 5: Strategy Performance",
+      "gridPos": {"x": 0, "y": 34, "w": 24, "h": 1}
+    },
+    {
+      "id": 19,
+      "type": "barchart",
+      "title": "Win Rate by Strategy",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 35, "w": 12, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (strategy) (mevbot_trade_win_rate_pct{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"})",
+          "legendFormat": "{{strategy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "orange", "value": 30},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 70}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {"orientation": "horizontal"}
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "Avg Profit per Trade",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 35, "w": 12, "h": 8},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mevbot_avg_profit_per_trade{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\"}",
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (strategy, mode) (increase(mevbot_executions_completed_total{chain=~\"$chain\",mode=~\"$mode\",strategy=~\"$strategy\",outcome=\"success\"}[24h]))",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true}}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"field": "Value", "desc": true}]}}
+      ]
+    },
+
+    {
+      "id": 21,
+      "type": "row",
+      "title": "Row 6: System Health",
+      "gridPos": {"x": 0, "y": 43, "w": 24, "h": 1}
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Opportunity Queue Depth",
+      "description": "Alert condition: >100 for 5m",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 44, "w": 8, "h": 6},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mevbot_pending_opportunities{chain=~\"$chain\"}",
+          "legendFormat": "{{chain}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 100}
+            ]
+          },
+          "custom": {"lineWidth": 2, "fillOpacity": 15}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "right"}}
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Processing Lag",
+      "description": "Alert condition: >1000ms for 2m",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 8, "y": 44, "w": 8, "h": 6},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mevbot_opportunity_processing_lag_ms{chain=~\"$chain\"}",
+          "legendFormat": "{{chain}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1000}
+            ]
+          },
+          "custom": {"lineWidth": 2, "fillOpacity": 15}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "right"}}
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Decision Latency",
+      "description": "Alert condition: p95 >100ms for 5m",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 16, "y": 44, "w": 8, "h": 6},
+      "transparent": true,
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, mode) (rate(mevbot_strategy_decision_latency_ms_bucket{chain=~\"$chain\",mode=~\"$mode\"}[5m])))",
+          "legendFormat": "p95 {{mode}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 100}
+            ]
+          },
+          "custom": {"lineWidth": 2, "fillOpacity": 15}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "right"}}
+    }
+  ]
+}
