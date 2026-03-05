@@ -72,7 +72,12 @@ def _wait_ws_connected(base_url: str, endpoint_hint: str, timeout_s: float = 60.
             if r.status_code == 200:
                 last = r.json()
                 ws_ep = str(last.get("ws_connected_endpoint") or "")
+                ws_selected = [str(x) for x in (last.get("ws_endpoints_selected") or [])]
+                # Prefer matching specific endpoint, but accept any active WS connection
+                # when the hint is at least configured for the runtime.
                 if endpoint_hint in ws_ep:
+                    return last
+                if ws_ep and any(endpoint_hint in ep for ep in ws_selected):
                     return last
         except Exception:
             pass

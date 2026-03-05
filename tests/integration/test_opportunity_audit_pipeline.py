@@ -19,15 +19,36 @@ from redis.asyncio import Redis
 import bot.api.main as api_main
 
 
-def _dsn() -> str:
+def _dsn():
+    host = os.getenv("POSTGRES_HOST", "postgres")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    cands = []
     explicit = os.getenv("DATABASE_URL", "").strip()
     if explicit:
-        return explicit
-    return (
-        f"postgresql://{os.getenv('POSTGRES_USER', 'mev_user')}:{os.getenv('POSTGRES_PASSWORD', 'change_me')}"
-        f"@{os.getenv('POSTGRES_HOST', 'postgres')}:{os.getenv('POSTGRES_PORT', '5432')}"
-        f"/{os.getenv('POSTGRES_DB', 'mev_bot')}"
+        cands.append(explicit)
+    cands.extend(
+        [
+            f"postgresql://{os.getenv('POSTGRES_USER', 'mev_user')}:{os.getenv('POSTGRES_PASSWORD', 'change_me')}@{host}:{port}/{os.getenv('POSTGRES_DB', 'mev_bot')}",
+            f"postgresql://mev_user:change_me@{host}:{port}/mev_bot",
+            f"postgresql://mevbot:mevbot_pw@{host}:{port}/mevbot",
+        ]
     )
+    seen = set()
+    for d in cands:
+        if d and d not in seen:
+            seen.add(d)
+            yield d
+
+
+async def _connect_any() -> asyncpg.Connection:
+    last: Exception | None = None
+    for d in _dsn():
+        try:
+            return await asyncpg.connect(d)
+        except Exception as e:
+            last = e
+            continue
+    raise RuntimeError(f"no working DSN for integration test: {last}")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -36,7 +57,7 @@ def _migrate_once() -> None:
 
 
 async def _fetchval(query: str, *args):
-    conn = await asyncpg.connect(_dsn())
+    conn = await _connect_any()
     try:
         return await conn.fetchval(query, *args)
     finally:
@@ -44,7 +65,7 @@ async def _fetchval(query: str, *args):
 
 
 async def _fetchrow(query: str, *args):
-    conn = await asyncpg.connect(_dsn())
+    conn = await _connect_any()
     try:
         return await conn.fetchrow(query, *args)
     finally:
@@ -52,7 +73,7 @@ async def _fetchrow(query: str, *args):
 
 
 async def _execute(query: str, *args) -> None:
-    conn = await asyncpg.connect(_dsn())
+    conn = await _connect_any()
     try:
         await conn.execute(query, *args)
     finally:
@@ -75,7 +96,8 @@ async def _insert_attempt_record(
     opp_id = f"itest-opp-{suffix}"
     attempt_id = f"itest-attempt-{suffix}"
     payload_hash = "0x" + (suffix * 4)[:64].ljust(64, "0")
-    tx_hash = payload_hash if status in {"SENT", "CONFIRMED", "REVERTED", "DROPPED"} else None
+    # Some schemas require tx_hash NOT NULL even for blocked/rejected attempts.
+    tx_hash = payload_hash
     sim_id = f"itest-sim-{suffix}"
     meta = {
         "strategy": strategy,
